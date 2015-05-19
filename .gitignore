@@ -1,1 +1,4 @@
 bower_components
+scripts/node_modules
+scripts/Leaflet.Snap
+*.log
