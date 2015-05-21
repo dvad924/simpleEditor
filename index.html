@@ -7,13 +7,19 @@
 	height:100%;
 }
 </style>
-<link rel="stylesheet" href="bower_components/leaflet/dist/leaflet.css">
+<link rel="stylesheet" href="scripts/bower_components/leaflet/dist/leaflet.css">
+<!--
 <script src="bower_components/leaflet/dist/leaflet.js"></script>
 <script src="scripts/node_modules/leaflet-path-drag/dist/L.Path.Drag.js"></script>
 <script src="scripts/node_modules/leaflet-geometryutil/dist/leaflet.geometryutil.js"></script>
 <script src="scripts/Leaflet.Snap/leaflet.snap.js"></script>
-<script src="bower_components/d3/d3.min.js"></script>
 <script src="scripts/leafletExt.js"></script>
+
+-->
+<script src="scripts/bower_components/d3/d3.min.js"></script>
+<script src="scripts/bower_components/d3-topojson/topojson.js"></script>
+<script src="scripts/livegtfsapi.js"></script>
+<script src="scripts/fuzzy.js"></script>
 <script src="scripts/app.js"></script>
 </head>
 
@@ -21,53 +27,42 @@
 <div id="map">
 	</div>
 <script>
-
-	var mapquestOSM = L.tileLayer("http://{s}.tiles.mapbox.com/v3/am3081.h0po4e8k/{z}/{x}/{y}.png");
-        //L.Icon.Default.imagePath= '/bower_components/leaflet/dist/images';
-    var map = L.map("map", {
-          center: [39.8282, -98.5795], //center on the US
-          zoom: 4,
-          layers: [mapquestOSM],
-          zoomControl: true,
-          attributionControl:false
-        });
-
-    d3.json('routes.json',function(err,data){
-    	if(err){
-    		console.log(err);
-    		return;	
-    	} 
-    	console.log(data);
-    	Lext.addroutes(data,map);
-    	d3.json('stops.json',function(err,data){
-	    	if(err){
-	    		console.log(err);
-	    		return;
-	    	}
-	    	console.log(data)
-	    	Lext.addstops(data,map);
-
-	    })
-    })
-    
+	var Wheight = window.outerHeight;
+	var Wwidth = window.outerWidth;
+	var startApp = require('editor');
+    var databox = d3.select('body').append('div').attr('id','datawarehouse');
+    		databox.style(function(){
+	    		var width = 400;
+	    		var height = 500;
+	    		var pos = Wheight - height - 50;	
+    			return{
+	    			position:'absolute',
+	    			height: height,
+	    			width: width,
+	    			top: 0,
+	    			padding:0,
+	    			margin:0,
+	    			'text-align':'center',
+	    			'background-color':'#ddd'
+	    		}
+	    	}());
   	var box = d3.select('body').append('div').attr('id','infobox');
-		  	var Wheight = window.outerHeight;
-		  	var Wwidth = window.outerWidth;
-		  	var width = 200 
-		  	var height = 200
-		  	var pos = Wheight - height - 50;
-		  	console.log(Wheight,pos);
-		  	box.style({
-		  		position:'absolute',
-		  		height: height,
-		  		width: width,
-		  		top: pos,
-		  		padding: 0,
-		  		margin:0,
-		  		'text-align':'center',
-		  		'background-color': '#ccc',
-		  	})
-
+		  	box.style(function(){
+			  		var width = 400 
+				  	var height = 200
+				  	var pos = Wheight - height - 50;
+			  		return{
+			  		position:'absolute',
+			  		height: height,
+			  		width: width,
+			  		top: pos,
+			  		padding: 0,
+			  		margin:0,
+			  		'text-align':'center',
+			  		'background-color': '#ccc',
+			  	}
+			}());
+	startApp();
 
 </script>
 
