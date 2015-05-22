@@ -59,7 +59,7 @@ var osrmApi = (function(){
 		osrm.getUrl = function(){
 			return this.baseUrl+this.locs;
 		}
-		osrm.handleRequest= function(id,callback){				//Function to handle request to the osrm webservers
+		osrm.handleRequest= function(callback){				//Function to handle request to the osrm webservers
 			d3.json(osrm.getUrl(),function(err,resp){			//request via d3 json  method
 				if(resp.status_message !== "Found route between points"){	//if given a bad status message, log it and end
 					console.log("Error",resp.status_message)
@@ -68,7 +68,7 @@ var osrmApi = (function(){
 				}
 				resp.route_geometry = decode(resp.route_geometry,6).map(swap);	//otherwise decode it's geometry
 				resp.via_points = resp.via_points.map(swap);
-				callback(id,resp);									//and pass the response object to the callback
+				callback(resp);									//and pass the response object to the callback
 			})		
 		}
 		return osrm;

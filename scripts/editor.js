@@ -6,7 +6,7 @@ var startApp = function(){
 	
 
 	var agency = 12;	
-	var testR = "1-142";
+	var testR = "50-142";
 	var fetcher = livegtfs.gtfsData; //get datamod for the gtfs api
     fetcher.getRoutes(agency,function(rdata){ //fetch the raw route data from the server
     	

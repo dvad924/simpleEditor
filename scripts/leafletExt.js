@@ -3,6 +3,8 @@ L = require('./bower_components/leaflet/dist/leaflet');
 require('./node_modules/leaflet-geometryutil/dist/leaflet.geometryutil');
 // require('./Leaflet.Snap/leaflet.snap');
 var update = require('./update');
+
+
 var Lext = (function(L){
 	var stateLayer;
 	var stopLayer;
@@ -32,6 +34,7 @@ var Lext = (function(L){
 		//map.fitBounds(bounds);
 	}
 	var addstops = function(sdata,map){
+
 		var stopLayer = L.geoJson(sdata,{
    				pointToLayer: function (d, latlng) {
                	var options = {                  
@@ -52,15 +55,12 @@ var Lext = (function(L){
                		var lng = obj._latlng.lng;
                		var box = d3.select('#infobox');
                		box.html('<h2>'+d.properties.stop_id+'</h2><p> lat: '+lat+'</p><p> long: '+lng+'</p>')
-                  
-
                 })
                obj.on('dragend',function(){
-               		// console.log(obj.toGeoJSON())
-               		// console.log(stopLayer.toGeoJSON())
                   map.removeLayer(stateLayer);
-                  update.update(stopLayer.toGeoJSON());
-
+                  obj.feature.geometry.coordinates[0] = obj._latlng.lng;
+                  obj.feature.geometry.coordinates[1] = obj._latlng.lat;
+                  update.update(obj.feature);
 
                })
                return obj;

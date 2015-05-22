@@ -1,52 +1,55 @@
 var Osrm = require('./osrmapi');
+var Graph = require('./miniGraph');
+var fb 	=   require('./featurebuilder.js');
 var updateObj = (function(){
+	var graph = new Graph(); //graph to maintain the relationships of the current tripRoute with its stops
 	var stopLocs;
 	var plotmod;
 	var stops;
 	var id;
+	var sDict;
+	var updatedStops;
 	var processAccumulator = function(sDict, acc){
-		var featColl = {type:"FeatureCollection", features:[]};
+
 		var keys = Object.keys(acc);
-		keys.forEach(function(key){						//for each collection of stop ids
-			var feat = {type:"Feature",properties:{},geometry:{type:'LineString'}}; //create a feature
-			var routeGeo = acc[key];
-			feat.geometry.coordinates = routeGeo.route_geometry;
-			featColl.features.push(feat);
-		});
-		plotmod.plotFeats(featColl);
+		var routeGeo = acc[keys[0]];
+		var featColl = fb(sDict,{type:'osrm',object:routeGeo}); //build the feature collection
+		if(graph.isEmpty()){
+			for(var i =0; i< stops.length-1; i++){//Go through the list of stops on our current route
+				//Note that the via_points array in the roouteGeo will be the associated with the same indicies;
+				var p1 = routeGeo.via_indices[i];	//index of first stop
+				var p2 = routeGeo.via_indices[i+1];	//index of second stop
+				var point_range = routeGeo.route_geometry.slice(p1,p2+1);
+				graph.addEdge(stops[i],stops[i+1],{type:'Feature',properties:{},geometry:{type:'LineString',coordinates:point_range}});  
+			}
+		}else{ // if the graph is not empty we only need to update two links
+			for(var i = 0; i < updatedStops.length-1; i++){
+				var p1 = routeGeo.via_indices[i];
+				var p2 = routeGeo.via_indices[i+1];
+				var point_range = routeGeo.route_geometry.slice(p1,p2+1);
+				graph.updateEdge(updatedStops[i],updatedStops[i+1],{type:'Feature',properties:{},geometry:{type:'LineString',coordinates:point_range}})
+			}
+		}
+		console.log(graph.toFeatureCollection());
+		plotmod.plotFeats(graph.toFeatureCollection());
 	}
 
-	var requestPaths = function(sDict, trajData,tripid){
+	var requestPath = function(sDict, trajectory){
 		var pathAccumulator ={};			//accumulator object for all the paths to be returned
 		var osrm = new Osrm();				//create new instance of api module
-		var keys = (tripid)? [Object.keys(trajData)[0]] : Object.keys(trajData);
-		var numTrajs = keys.length;
-		var inx = 0;
-		var seen =0;
-		var interval = setInterval(function(){
-			if(inx < numTrajs){
-				trajectory = trajData[keys[inx]];		//get  the next trajectory;
-				console.log(trajectory);
-				osrm.addwaypoints(trajectory);		//add the coordinates as waypoints in the requested
-				osrm.handleRequest(inx,function(i,data){	//request  callback for data from osrm server
-					pathAccumulator[keys[i]] = data;		//add the data to the accumulator
-					seen++;							//note that we have seen another response
-					console.log(seen,numTrajs);
-					if(seen >= numTrajs){			//if all the trajectories have be en requested and responded further process them.
-						console.log(pathAccumulator);
-						processAccumulator(sDict,pathAccumulator);
-					}
-				});	
-				inx++;								//increment key counter;
-			}else{
-				clearInterval(interval);
-			}
-		},5);
+		
+		console.log(trajectory);
+		osrm.addwaypoints(trajectory);		//add the coordinates as waypoints in the request
+		osrm.handleRequest(function(data){	//request  callback for data from osrm server
+			pathAccumulator[id] = data;		//add the data to the accumulator
+			console.log(pathAccumulator);
+			processAccumulator(sDict,pathAccumulator);
+		});	
 	}
 
 	var displayStops = function(sDict,stops){
 		var FeatColl = {type:'FeatureCollection', features:[]};
-		debugger;
+		
 		stops.forEach(function(sid){
 			FeatColl.features.push(sDict[sid]);
 		})
@@ -75,31 +78,38 @@ var updateObj = (function(){
 	}
 
 	//function to kickstart the application
-	var init = function(sDict, scheds,tripid,plotter){
-		debugger;
+	var init = function(Dict,scheds,tripid,plotter){
+		sDict = Dict;
 		tripid = Object.keys(scheds)[0];				////////////////////////Set to first element for test, dev, and debug////////////////////////
 		plotmod = plotter;
 		stopLocs = sDict; //set the modules dictionary of stops
 		//process schedule data
 		var waypoints = processData(stopLocs,scheds);
 		displayStops(sDict,stops);
-		requestPaths(sDict,waypoints,tripid);
+		requestPath(sDict,waypoints[id]);
+
 	}
 
-	var updateMap = function(StopJson){
-		var miniTable = {}, coorlist = [];
-		StopJson.features.forEach(function(stop){
-			miniTable[stop.properties.stop_id] = stop.geometry.coordinates;
+	var updateMap = function(stopObj){
+		var stopid = stopObj.properties.stop_id;
+		console.log(stopid);
+		sDict[stopid].geometry.coordinates = stopObj.geometry.coordinates;
+		var inx = stops.indexOf(stopid);
+		if(inx != 0 && inx != stops.length-1){
+			updatedStops = stops.slice(inx-1,inx+2);
+		}
+		else if(inx > 0){
+			updatesStops = stops.slice(inx-1,inx+1);
+		}
+		else{
+			updatedStops = stops.slice(inx,inx+2);
+		}
+		var reqobj = [];
+		debugger;
+		updatedStops.forEach(function(sid){
+			reqobj.push(sDict[sid].geometry.coordinates);
 		});
-
-		stops.forEach(function(sid){
-			coorlist.push(miniTable[sid]);
-		});
-		var strlist = JSON.stringify(stops);
-		var reqobj = {}
-		reqobj[id] = coorlist;
-		requestPaths(miniTable,reqobj,id);
-
+		requestPath(sDict,reqobj);
 	}
 	return {update:updateMap, init:init};
 })();

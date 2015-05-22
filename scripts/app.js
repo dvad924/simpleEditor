@@ -31,6 +31,8 @@ L = require('./bower_components/leaflet/dist/leaflet');
 require('./node_modules/leaflet-geometryutil/dist/leaflet.geometryutil');
 // require('./Leaflet.Snap/leaflet.snap');
 var update = require('./update');
+
+
 var Lext = (function(L){
 	var stateLayer;
 	var stopLayer;
@@ -60,6 +62,7 @@ var Lext = (function(L){
 		//map.fitBounds(bounds);
 	}
 	var addstops = function(sdata,map){
+
 		var stopLayer = L.geoJson(sdata,{
    				pointToLayer: function (d, latlng) {
                	var options = {                  
@@ -80,15 +83,12 @@ var Lext = (function(L){
                		var lng = obj._latlng.lng;
                		var box = d3.select('#infobox');
                		box.html('<h2>'+d.properties.stop_id+'</h2><p> lat: '+lat+'</p><p> long: '+lng+'</p>')
-                  
-
                 })
                obj.on('dragend',function(){
-               		// console.log(obj.toGeoJSON())
-               		// console.log(stopLayer.toGeoJSON())
                   map.removeLayer(stateLayer);
-                  update.update(stopLayer.toGeoJSON());
-
+                  obj.feature.geometry.coordinates[0] = obj._latlng.lng;
+                  obj.feature.geometry.coordinates[1] = obj._latlng.lat;
+                  update.update(obj.feature);
 
                })
                return obj;
@@ -116,7 +116,7 @@ module.exports = {extension:Lext , L:L};
 
 
 
-},{"./bower_components/leaflet/dist/leaflet":1,"./node_modules/leaflet-geometryutil/dist/leaflet.geometryutil":5,"./update":9}],4:[function(require,module,exports){
+},{"./bower_components/leaflet/dist/leaflet":1,"./node_modules/leaflet-geometryutil/dist/leaflet.geometryutil":6,"./update":10}],4:[function(require,module,exports){
 //livegtfsapi.js
 
 
@@ -2128,6 +2128,146 @@ if(typeof module !== 'undefined'){
 	module.exports = livegtfs;
 }
 },{}],5:[function(require,module,exports){
+var miniGraph = function(){
+    //node object that will be verticies of a graph
+    var node = function(v){
+		this.val = v.toString();
+		this.adjs = [];
+		this.addadj = function(v){
+		    this.adjs.push(v.toString());
+		}
+		this.isLinked = function(v){
+		    return this.adjs.indexOf(v.toString()) >= 0;
+		}
+		this.getNeihbors = function(){
+			return this.adjs;
+		}
+    }
+    //An edge contains refereces to 2 nodes in the graph
+    //as well as extra data that needs to be associated with them.
+    var edge = function(n1,n2,data){
+    	this.id = n1.val + n2.val; //concatenate identifying strings of the nodes to form an edge id
+    	this.data = data;
+    }
+    //list of nodes for the current graph
+    this.nodes = {};
+    this.edges = {};
+    this.numedges = 0;
+    this.isEmpty = function(){
+    	return this.numedges <= 0;
+    }
+    this.queryNode = function(v1){
+		return this.nodes[v1.toString()];
+    }
+    this.insertNode = function(v1){
+		var strrep = v1.toString();
+		this.nodes[strrep] = this.nodes[strrep] || new node(v1);
+		return this.nodes[strrep];
+    }
+    //Function to determine if a given edge
+    //currently resides within the graph
+    this.testEdge = function(v1,v2){
+		var n1 = this.queryNode(v1);
+		var n2 = this.queryNode(v2);
+		if( n1 && n2 ){
+		    return n1.isLinked(v2);
+		}else{
+		    return false;
+		}
+    };
+
+    //Function to add an edge to the graph
+    //Edge is determined by its 2 ending 
+    this.addEdge = function(v1,v2,data){
+		if(!this.testEdge(v1,v2)){
+		    var n1 = this.insertNode(v1);
+		    var n2 = this.insertNode(v2);
+		    n1.addadj(v2);
+		    n2.addadj(v1);	
+		    var e = new edge(n1,n2,data);
+		    this.edges[e.id] = e;
+		    this.numedges++;
+		    return true;
+		}else{
+		    return false;
+		}
+    };
+   this.updateEdge = function(v1,v2,data){
+   	var edge = this.getEdge(v1,v2);
+   	if(edge){
+   		edge.data = data;
+   		return true;
+   	}
+   	else
+   		return false;
+   }
+    //if the two vertex identifiers form an edge
+    //retrieve their edge object.
+    this.getEdge = function(v1,v2){
+    	var retobj;
+    	var id;
+    	if(this.testEdge(v1,v2)){
+    		id = v1.toString() + v2.toString();
+    		retobj = this.edges[id];
+    		if(retobj)
+    			return retobj;
+    		id = v2.toString() + v1.toString();
+    		return this.edges[id];
+    	}
+    }
+    this.toFeatureCollection = function(){
+    	var featcoll = {type:'FeatureCollection',features:[]};
+    	var graph = this;
+    	Object.keys(this.edges).forEach(function(key){
+    		var data = graph.edges[key].data;
+    		if(data.type === 'Feature')
+    			featcoll.features.push(data);
+    	});
+    	return featcoll;
+    }
+
+    //Perform breadth first search to find paths within the graph
+    //Inputs starting point and ending point, returns all 
+    //intermediary points inbetween
+    this.bfs = function(v1,v2){
+		v1 = v1.toString();
+		v2 = v2.toString();
+		var queue = [];
+		var set = [];
+		var parents = {};
+		queue.push(v1);//push the starting point on 
+		set.push(v1);  //both the queue and seen list
+		while(queue.length != 0){
+		    var t = queue.splice(0,1)[0] //get the oldes item in the queue
+		    if(t === v2){                //if it is the endpoint
+			var pathStack = [v2];    //initially add end point to pathlist 
+			var child = v2, parent = parents[v2.toString()];//set it as the child and get its parent node in the path
+			pathStack.unshift(parent);// add the parent to the list
+			while(parent !== v1){
+			    child = parent;      //set the child to the parent node.
+			    parent = parents[child.toString()]; //get its parent node 
+			    pathStack.unshift(parent);//add the parent to the list
+			}
+			return pathStack;        //return the final list
+		    }
+		    
+		    var adjs = this.queryNode(t).adjs;      //if its not the end point
+		    adjs.forEach(function(vert){ //get the nodes adjacent to the current node
+			if(set.indexOf(vert) < 0){//if the current vertex hasn't been seen
+			    queue.push(vert);     //add the vertex to the queue to be visited
+			    set.push(vert);       //add it to the list of seen vertexes
+			    parents[vert.toString()] = t;//note the current node as its parent
+			}
+		    });
+		}
+    }
+    
+    
+}
+
+module.exports = miniGraph
+
+},{}],6:[function(require,module,exports){
 // Packaging/modules magic dance.
 (function (factory) {
     var L;
@@ -2634,7 +2774,7 @@ return L.GeometryUtil;
 
 }));
 
-},{"leaflet":6}],6:[function(require,module,exports){
+},{"leaflet":7}],7:[function(require,module,exports){
 /*
  Leaflet, a JavaScript library for mobile-friendly interactive maps. http://leafletjs.com
  (c) 2010-2013, Vladimir Agafonkin
@@ -11815,7 +11955,7 @@ L.Map.include({
 
 
 }(window, document));
-},{}],7:[function(require,module,exports){
+},{}],8:[function(require,module,exports){
 var swap = function(point){
 	return [point[1],point[0]];
 }
@@ -11877,7 +12017,7 @@ var osrmApi = (function(){
 		osrm.getUrl = function(){
 			return this.baseUrl+this.locs;
 		}
-		osrm.handleRequest= function(id,callback){				//Function to handle request to the osrm webservers
+		osrm.handleRequest= function(callback){				//Function to handle request to the osrm webservers
 			d3.json(osrm.getUrl(),function(err,resp){			//request via d3 json  method
 				if(resp.status_message !== "Found route between points"){	//if given a bad status message, log it and end
 					console.log("Error",resp.status_message)
@@ -11886,14 +12026,14 @@ var osrmApi = (function(){
 				}
 				resp.route_geometry = decode(resp.route_geometry,6).map(swap);	//otherwise decode it's geometry
 				resp.via_points = resp.via_points.map(swap);
-				callback(id,resp);									//and pass the response object to the callback
+				callback(resp);									//and pass the response object to the callback
 			})		
 		}
 		return osrm;
 	});
 
 	module.exports = osrmApi
-},{}],8:[function(require,module,exports){
+},{}],9:[function(require,module,exports){
 //plotmod
 var bundle = require('./leafletExt');
 L = bundle.L;
@@ -11921,56 +12061,59 @@ var plotter = (function(){
 
 module.exports = plotter;
 
-},{"./leafletExt":3}],9:[function(require,module,exports){
+},{"./leafletExt":3}],10:[function(require,module,exports){
 var Osrm = require('./osrmapi');
+var Graph = require('./miniGraph');
+var fb 	=   require('./featurebuilder.js');
 var updateObj = (function(){
+	var graph = new Graph(); //graph to maintain the relationships of the current tripRoute with its stops
 	var stopLocs;
 	var plotmod;
 	var stops;
 	var id;
+	var sDict;
+	var updatedStops;
 	var processAccumulator = function(sDict, acc){
-		var featColl = {type:"FeatureCollection", features:[]};
+
 		var keys = Object.keys(acc);
-		keys.forEach(function(key){						//for each collection of stop ids
-			var feat = {type:"Feature",properties:{},geometry:{type:'LineString'}}; //create a feature
-			var routeGeo = acc[key];
-			feat.geometry.coordinates = routeGeo.route_geometry;
-			featColl.features.push(feat);
-		});
-		plotmod.plotFeats(featColl);
+		var routeGeo = acc[keys[0]];
+		var featColl = fb(sDict,{type:'osrm',object:routeGeo}); //build the feature collection
+		if(graph.isEmpty()){
+			for(var i =0; i< stops.length-1; i++){//Go through the list of stops on our current route
+				//Note that the via_points array in the roouteGeo will be the associated with the same indicies;
+				var p1 = routeGeo.via_indices[i];	//index of first stop
+				var p2 = routeGeo.via_indices[i+1];	//index of second stop
+				var point_range = routeGeo.route_geometry.slice(p1,p2+1);
+				graph.addEdge(stops[i],stops[i+1],{type:'Feature',properties:{},geometry:{type:'LineString',coordinates:point_range}});  
+			}
+		}else{ // if the graph is not empty we only need to update two links
+			for(var i = 0; i < updatedStops.length-1; i++){
+				var p1 = routeGeo.via_indices[i];
+				var p2 = routeGeo.via_indices[i+1];
+				var point_range = routeGeo.route_geometry.slice(p1,p2+1);
+				graph.updateEdge(updatedStops[i],updatedStops[i+1],{type:'Feature',properties:{},geometry:{type:'LineString',coordinates:point_range}})
+			}
+		}
+		console.log(graph.toFeatureCollection());
+		plotmod.plotFeats(graph.toFeatureCollection());
 	}
 
-	var requestPaths = function(sDict, trajData,tripid){
+	var requestPath = function(sDict, trajectory){
 		var pathAccumulator ={};			//accumulator object for all the paths to be returned
 		var osrm = new Osrm();				//create new instance of api module
-		var keys = (tripid)? [Object.keys(trajData)[0]] : Object.keys(trajData);
-		var numTrajs = keys.length;
-		var inx = 0;
-		var seen =0;
-		var interval = setInterval(function(){
-			if(inx < numTrajs){
-				trajectory = trajData[keys[inx]];		//get  the next trajectory;
-				console.log(trajectory);
-				osrm.addwaypoints(trajectory);		//add the coordinates as waypoints in the requested
-				osrm.handleRequest(inx,function(i,data){	//request  callback for data from osrm server
-					pathAccumulator[keys[i]] = data;		//add the data to the accumulator
-					seen++;							//note that we have seen another response
-					console.log(seen,numTrajs);
-					if(seen >= numTrajs){			//if all the trajectories have be en requested and responded further process them.
-						console.log(pathAccumulator);
-						processAccumulator(sDict,pathAccumulator);
-					}
-				});	
-				inx++;								//increment key counter;
-			}else{
-				clearInterval(interval);
-			}
-		},5);
+		
+		console.log(trajectory);
+		osrm.addwaypoints(trajectory);		//add the coordinates as waypoints in the request
+		osrm.handleRequest(function(data){	//request  callback for data from osrm server
+			pathAccumulator[id] = data;		//add the data to the accumulator
+			console.log(pathAccumulator);
+			processAccumulator(sDict,pathAccumulator);
+		});	
 	}
 
 	var displayStops = function(sDict,stops){
 		var FeatColl = {type:'FeatureCollection', features:[]};
-		debugger;
+		
 		stops.forEach(function(sid){
 			FeatColl.features.push(sDict[sid]);
 		})
@@ -11999,38 +12142,45 @@ var updateObj = (function(){
 	}
 
 	//function to kickstart the application
-	var init = function(sDict, scheds,tripid,plotter){
-		debugger;
+	var init = function(Dict,scheds,tripid,plotter){
+		sDict = Dict;
 		tripid = Object.keys(scheds)[0];				////////////////////////Set to first element for test, dev, and debug////////////////////////
 		plotmod = plotter;
 		stopLocs = sDict; //set the modules dictionary of stops
 		//process schedule data
 		var waypoints = processData(stopLocs,scheds);
 		displayStops(sDict,stops);
-		requestPaths(sDict,waypoints,tripid);
+		requestPath(sDict,waypoints[id]);
+
 	}
 
-	var updateMap = function(StopJson){
-		var miniTable = {}, coorlist = [];
-		StopJson.features.forEach(function(stop){
-			miniTable[stop.properties.stop_id] = stop.geometry.coordinates;
+	var updateMap = function(stopObj){
+		var stopid = stopObj.properties.stop_id;
+		console.log(stopid);
+		sDict[stopid].geometry.coordinates = stopObj.geometry.coordinates;
+		var inx = stops.indexOf(stopid);
+		if(inx != 0 && inx != stops.length-1){
+			updatedStops = stops.slice(inx-1,inx+2);
+		}
+		else if(inx > 0){
+			updatesStops = stops.slice(inx-1,inx+1);
+		}
+		else{
+			updatedStops = stops.slice(inx,inx+2);
+		}
+		var reqobj = [];
+		debugger;
+		updatedStops.forEach(function(sid){
+			reqobj.push(sDict[sid].geometry.coordinates);
 		});
-
-		stops.forEach(function(sid){
-			coorlist.push(miniTable[sid]);
-		});
-		var strlist = JSON.stringify(stops);
-		var reqobj = {}
-		reqobj[id] = coorlist;
-		requestPaths(miniTable,reqobj,id);
-
+		requestPath(sDict,reqobj);
 	}
 	return {update:updateMap, init:init};
 })();
 
 
 module.exports = updateObj;
-},{"./osrmapi":7}],"editor":[function(require,module,exports){
+},{"./featurebuilder.js":2,"./miniGraph":5,"./osrmapi":8}],"editor":[function(require,module,exports){
 var startApp = function(){
 	var update = require('./update');
 	var plotmod =require('./plotmod');
@@ -12039,7 +12189,7 @@ var startApp = function(){
 	
 
 	var agency = 12;	
-	var testR = "1-142";
+	var testR = "50-142";
 	var fetcher = livegtfs.gtfsData; //get datamod for the gtfs api
     fetcher.getRoutes(agency,function(rdata){ //fetch the raw route data from the server
     	
@@ -12073,4 +12223,4 @@ module.exports= startApp;
 
 
 
-},{"./featurebuilder":2,"./livegtfsapi":4,"./plotmod":8,"./update":9}]},{},[]);
+},{"./featurebuilder":2,"./livegtfsapi":4,"./plotmod":9,"./update":10}]},{},[]);
