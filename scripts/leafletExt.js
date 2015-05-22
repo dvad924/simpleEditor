@@ -6,20 +6,29 @@ var update = require('./update');
 
 
 var Lext = (function(L){
-	var stateLayer;
-	var stopLayer;
+	var layers = {};
 	var getStopLayer = function(){
-    return stopLayer;
+    return layers['stops'];
   }
   var getPathLayer = function(){
-    return stateLayer;
+    return layers['paths'];
+  }
+
+  var getAllLayers = function(){
+    var layerList = [];
+    Object.keys(layers).forEach(function(id){
+      if(layers[id])
+        layerList.push(layers[id]);
+    })
+    return layerList;
   }
 
   var addroutes = function(rdata,map){
 		var bounds = [];
+
 		// bounds.push(rdata.bbox.splice(0,2).reverse());
 		// bounds.push(rdata.bbox.reverse());
-		stateLayer = L.geoJson(rdata, {
+		layers['paths'] = L.geoJson(rdata, {
 			style:function(feature){
 				return {
 					//color:'#'+feature.properties.route_color,
@@ -30,12 +39,12 @@ var Lext = (function(L){
 			},
 
 		});
-		stateLayer.addTo(map);
-		//map.fitBounds(bounds);
+		layers.paths.addTo(map);
+		map.fitBounds(layers.paths.getBounds());
 	}
 	var addstops = function(sdata,map){
 
-		var stopLayer = L.geoJson(sdata,{
+		layers['stops'] = L.geoJson(sdata,{
    				pointToLayer: function (d, latlng) {
                	var options = {                  
                    color: "#000",
@@ -57,7 +66,7 @@ var Lext = (function(L){
                		box.html('<h2>'+d.properties.stop_id+'</h2><p> lat: '+lat+'</p><p> long: '+lng+'</p>')
                 })
                obj.on('dragend',function(){
-                  map.removeLayer(stateLayer);
+                  map.removeLayer(layers.paths);
                   obj.feature.geometry.coordinates[0] = obj._latlng.lng;
                   obj.feature.geometry.coordinates[1] = obj._latlng.lat;
                   update.update(obj.feature);
@@ -70,8 +79,7 @@ var Lext = (function(L){
 			    }
 
 			})
-		console.log(stopLayer)
-   		stopLayer.addTo(map);
+   		layers.stops.addTo(map);
    		//make each stop marker snapable to the routes.
    		// Object.keys(stopLayer._layers).forEach(function(markerid){
    		// 	marker = stopLayer._layers[markerid];
@@ -81,7 +89,13 @@ var Lext = (function(L){
    		// });
 	}
   
-	return {addroutes:addroutes,addstops:addstops, getstoplayer:getStopLayer,getpathlayer:getPathLayer};
+	return {
+    addroutes:addroutes,
+    addstops:addstops, 
+    getstoplayer:getStopLayer,
+    getpathlayer:getPathLayer,
+    getAllLayers:getAllLayers
+  };
 })(L);
 
 module.exports = {extension:Lext , L:L};

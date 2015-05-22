@@ -3,7 +3,7 @@ var startApp = function(){
 	var plotmod =require('./plotmod');
 	var livegtfs = require('./livegtfsapi');
 	var fb = require('./featurebuilder');
-	
+	var databox = require('./databox');
 
 	var agency = 12;	
 	var testR = "50-142";
@@ -14,18 +14,15 @@ var startApp = function(){
     		//Lext.addstops(stopData,map);
     		stopDict = {};												//define lookup dictionary for stops
     		stopData = fuzzyfixer(rdata,stopData);						//perform fuzzy fix to allow for better queries to osrm
-    		stopData.features = stopData.features.filter(function(d){return d.properties.routes.indexOf(testR) >= 0})//filter stops to current route
-    		console.log(stopData);
-    		stopData.features.forEach(function(stop){	//build dictionary of stops
-    			stopDict[stop.properties.stop_id] = stop;
-    		})
+
+    		
     		console.log(stopDict)
     		fetcher.getSchedule(agency,{Day:'Monday'},function(scheds){	//request the schedule data from the server
+    			databox.init(rdata,stopData,scheds);
     			console.log(scheds);
-    			testObj ={};
-    			testObj[testR] = scheds[testR];							//limit current view to 1 route for testing
-    			console.log(testObj);					
-    			initialfeatures = update.init(stopDict,testObj,{},plotmod);		//initialize map
+    			// testObj[testR] = scheds[testR];							//limit current view to 1 route for testing
+    			// console.log(testObj);					
+    			//initialfeatures = update.init(stopDict,testObj,{},plotmod);		//initialize map
     		})		
     	});
     });	

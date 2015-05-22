@@ -3,12 +3,16 @@ var Graph = require('./miniGraph');
 var fb 	=   require('./featurebuilder.js');
 var updateObj = (function(){
 	var graph = new Graph(); //graph to maintain the relationships of the current tripRoute with its stops
-	var stopLocs;
 	var plotmod;
 	var stops;
 	var id;
 	var sDict;
 	var updatedStops;
+
+	var reset = function(){
+		graph = new Graph();
+	}
+
 	var processAccumulator = function(sDict, acc){
 
 		var keys = Object.keys(acc);
@@ -16,7 +20,7 @@ var updateObj = (function(){
 		var featColl = fb(sDict,{type:'osrm',object:routeGeo}); //build the feature collection
 		if(graph.isEmpty()){
 			for(var i =0; i< stops.length-1; i++){//Go through the list of stops on our current route
-				//Note that the via_points array in the roouteGeo will be the associated with the same indicies;
+				//Note that the via_points array in the routeGeo will be the associated with the same indicies;
 				var p1 = routeGeo.via_indices[i];	//index of first stop
 				var p2 = routeGeo.via_indices[i+1];	//index of second stop
 				var point_range = routeGeo.route_geometry.slice(p1,p2+1);
@@ -58,36 +62,29 @@ var updateObj = (function(){
 
 	//Function  to collect the stop paths traversed by each trip
 	//into a single matrix;
-	var processData = function(sDict, scheds){	//get simple psuedo matrix of trip traversals
+	var processData = function(sDict, trip){	//get simple psuedo matrix of trip traversals
 		var dataMatrix = {};
-		var rids = Object.keys(scheds);			//get every route id
-		rids.forEach(function(rid){				//for each id
-			var route = scheds[rid];			//get the schedule associated with it
-			var trip = route.trips[0];
-				id = trip.id;
-				var ids = JSON.parse(trip.id);	//get the list off stops it traverses in order of arrival
-				stops = ids;
-				var coorVector = [];			
-				ids.forEach(function(id){		//for each stop that it visits
-					coorVector.push(sDict[id].geometry.coordinates);	//push that stop's coordinates into the vector
-				
+			id = trip.id;
+			var ids = JSON.parse(trip.id);	//get the list off stops it traverses in order of arrival
+			stops = ids;
+			var coorVector = [];			
+			ids.forEach(function(id){		//for each stop that it visits
+				coorVector.push(sDict[id].geometry.coordinates);	//push that stop's coordinates into the vector
+			
 				dataMatrix[trip.id] = coorVector;	//push that vector into the matrix
 			});
-		});
 		return dataMatrix;
 	}
 
 	//function to kickstart the application
-	var init = function(Dict,scheds,tripid,plotter){
+	var init = function(Dict,sched,tripid,plotter){
 		sDict = Dict;
-		tripid = Object.keys(scheds)[0];				////////////////////////Set to first element for test, dev, and debug////////////////////////
+		tripid = Object.keys(sched)[0];				////////////////////////Set to first element for test, dev, and debug////////////////////////
 		plotmod = plotter;
-		stopLocs = sDict; //set the modules dictionary of stops
 		//process schedule data
-		var waypoints = processData(stopLocs,scheds);
+		var waypoints = processData(Dict,sched[tripid]);
 		displayStops(sDict,stops);
 		requestPath(sDict,waypoints[id]);
-
 	}
 
 	var updateMap = function(stopObj){
@@ -111,7 +108,7 @@ var updateObj = (function(){
 		});
 		requestPath(sDict,reqobj);
 	}
-	return {update:updateMap, init:init};
+	return {update:updateMap, init:init, reset:reset};
 })();
 
 

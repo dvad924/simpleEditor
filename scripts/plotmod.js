@@ -11,14 +11,20 @@ var plotter = (function(){
           center: [39.8282, -98.5795], //center on the US
           zoom: 4,
           layers: [mapquestOSM],	//use the tilelayer png as map background layer
-          zoomControl: true,		//show zoom buttons
+          zoomControl: false,		//show zoom buttons
           attributionControl:false
         });
+    new L.Control.Zoom({position:'topright'}).addTo(map);
     plotmod.plotFeats = function(FeatColl){
     	var layer = Lext.addroutes(FeatColl,map);
     }
     plotmod.plotStops = function(FeatColl){
     	Lext.addstops(FeatColl,map);
+    }
+    plotmod.clear = function(){
+      Lext.getAllLayers().forEach(function(layer){
+        map.removeLayer(layer);
+      })
     }
     return plotmod;
 })();

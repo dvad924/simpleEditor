@@ -30,22 +30,7 @@
 	var Wheight = window.outerHeight;
 	var Wwidth = window.outerWidth;
 	var startApp = require('editor');
-    var databox = d3.select('body').append('div').attr('id','datawarehouse');
-    		databox.style(function(){
-	    		var width = 400;
-	    		var height = 500;
-	    		var pos = Wheight - height - 50;	
-    			return{
-	    			position:'absolute',
-	    			height: height,
-	    			width: width,
-	    			top: 0,
-	    			padding:0,
-	    			margin:0,
-	    			'text-align':'center',
-	    			'background-color':'#ddd'
-	    		}
-	    	}());
+    
   	var box = d3.select('body').append('div').attr('id','infobox');
 		  	box.style(function(){
 			  		var width = 400 
