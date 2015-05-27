@@ -15,17 +15,32 @@ var plotter = (function(){
           attributionControl:false
         });
     new L.Control.Zoom({position:'topright'}).addTo(map);
-    plotmod.plotFeats = function(FeatColl){
-    	var layer = Lext.addroutes(FeatColl,map);
+    plotmod.plotFeats = function(FeatColl,fit){
+    	var layer = Lext.addroutes(FeatColl,map,fit);
     }
+    plotmod.plotFeatsBack = function(FeatColl){
+      var layer = Lext.addroutesBack(FeatColl,map);
+    };
     plotmod.plotStops = function(FeatColl){
     	Lext.addstops(FeatColl,map);
+    }
+    plotmod.foregroundClear = function(){
+      Lext.getFocusLayers().forEach(function(layer){
+        map.removeLayer(layer);
+      })
+    }
+    plotmod.clearStops = function(){
+      var layer = Lext.getstoplayer();
+      if(layer){
+         map.removeLayer(layer);
+      }
     }
     plotmod.clear = function(){
       Lext.getAllLayers().forEach(function(layer){
         map.removeLayer(layer);
       })
     }
+
     return plotmod;
 })();
 

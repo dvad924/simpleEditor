@@ -5,58 +5,53 @@ var updateObj = (function(){
 	var graph = new Graph(); //graph to maintain the relationships of the current tripRoute with its stops
 	var plotmod;
 	var stops;
-	var id;
 	var sDict;
-	var updatedStops;
 
 	var reset = function(){
 		graph = new Graph();
 	}
 
-	var processAccumulator = function(sDict, acc){
+	var processAccumulator = function(sDict, data){
 
-		var keys = Object.keys(acc);
-		var routeGeo = acc[keys[0]];
+		var routeGeo = data;
 		var featColl = fb(sDict,{type:'osrm',object:routeGeo}); //build the feature collection
-		if(graph.isEmpty()){
+		console.log(routeGeo);
+		var emptyGraph = graph.isEmpty();
 			for(var i =0; i< stops.length-1; i++){//Go through the list of stops on our current route
 				//Note that the via_points array in the routeGeo will be the associated with the same indicies;
 				var p1 = routeGeo.via_indices[i];	//index of first stop
 				var p2 = routeGeo.via_indices[i+1];	//index of second stop
 				var point_range = routeGeo.route_geometry.slice(p1,p2+1);
-				graph.addEdge(stops[i],stops[i+1],{type:'Feature',properties:{},geometry:{type:'LineString',coordinates:point_range}});  
+				if(emptyGraph)
+					graph.addEdge(stops[i],stops[i+1],{type:'Feature',properties:{},geometry:{type:'LineString',coordinates:point_range}});  
+				else
+					graph.updateEdge(stops[i],stops[i+1],{type:'Feature',properties:{},geometry:{type:'LineString',coordinates:point_range}})
 			}
-		}else{ // if the graph is not empty we only need to update two links
-			for(var i = 0; i < updatedStops.length-1; i++){
-				var p1 = routeGeo.via_indices[i];
-				var p2 = routeGeo.via_indices[i+1];
-				var point_range = routeGeo.route_geometry.slice(p1,p2+1);
-				graph.updateEdge(updatedStops[i],updatedStops[i+1],{type:'Feature',properties:{},geometry:{type:'LineString',coordinates:point_range}})
-			}
-		}
-		console.log(graph.toFeatureCollection());
-		plotmod.plotFeats(graph.toFeatureCollection());
+			console.log(graph);
+			stops.forEach(function(sid,i){
+				sDict[sid].geometry.coordinates = routeGeo.via_points[i];
+			})
+			displayStops(sDict,stops);
+			plotmod.plotFeats(graph.toFeatureCollection(),emptyGraph);
+		
 	}
 
 	var requestPath = function(sDict, trajectory){
 		var pathAccumulator ={};			//accumulator object for all the paths to be returned
 		var osrm = new Osrm();				//create new instance of api module
-		
 		console.log(trajectory);
 		osrm.addwaypoints(trajectory);		//add the coordinates as waypoints in the request
 		osrm.handleRequest(function(data){	//request  callback for data from osrm server
-			pathAccumulator[id] = data;		//add the data to the accumulator
-			console.log(pathAccumulator);
-			processAccumulator(sDict,pathAccumulator);
+			processAccumulator(sDict,data);
 		});	
 	}
 
 	var displayStops = function(sDict,stops){
 		var FeatColl = {type:'FeatureCollection', features:[]};
-		
 		stops.forEach(function(sid){
 			FeatColl.features.push(sDict[sid]);
 		})
+		plotmod.clearStops();
 		plotmod.plotStops(FeatColl);
 	}
 
@@ -64,16 +59,13 @@ var updateObj = (function(){
 	//into a single matrix;
 	var processData = function(sDict, trip){	//get simple psuedo matrix of trip traversals
 		var dataMatrix = {};
-			id = trip.id;
 			var ids = JSON.parse(trip.id);	//get the list off stops it traverses in order of arrival
 			stops = ids;
 			var coorVector = [];			
 			ids.forEach(function(id){		//for each stop that it visits
 				coorVector.push(sDict[id].geometry.coordinates);	//push that stop's coordinates into the vector
-			
-				dataMatrix[trip.id] = coorVector;	//push that vector into the matrix
 			});
-		return dataMatrix;
+		return coorVector;
 	}
 
 	//function to kickstart the application
@@ -84,31 +76,70 @@ var updateObj = (function(){
 		//process schedule data
 		var waypoints = processData(Dict,sched[tripid]);
 		displayStops(sDict,stops);
-		requestPath(sDict,waypoints[id]);
+		requestPath(sDict,waypoints);
 	}
-
 	var updateMap = function(stopObj){
-		var stopid = stopObj.properties.stop_id;
-		console.log(stopid);
-		sDict[stopid].geometry.coordinates = stopObj.geometry.coordinates;
-		var inx = stops.indexOf(stopid);
-		if(inx != 0 && inx != stops.length-1){
-			updatedStops = stops.slice(inx-1,inx+2);
-		}
-		else if(inx > 0){
-			updatesStops = stops.slice(inx-1,inx+1);
-		}
-		else{
-			updatedStops = stops.slice(inx,inx+2);
+		if(stopObj){
+			var stopid = stopObj.properties.stop_id;
+			console.log(stopid);
+			sDict[stopid].geometry.coordinates = stopObj.geometry.coordinates;	
 		}
 		var reqobj = [];
-		debugger;
-		updatedStops.forEach(function(sid){
+		stops.forEach(function(sid){
 			reqobj.push(sDict[sid].geometry.coordinates);
-		});
+		})
+		console.log(stops);
 		requestPath(sDict,reqobj);
 	}
-	return {update:updateMap, init:init, reset:reset};
+	var save = function(){
+
+		return {graph:graph,stops:stops,objects:sDict};
+	}
+
+	var addPoint = function(newStop){
+		var qObj,i1,i2,i;
+		var id = '';
+		do{
+			if(id !== '')
+				alert('stop already exits');
+			id = prompt('Please Enter new stop id');
+		}while(sDict[id])//poll until a new ID has been entered
+		newStop.properties.stop_id = id;
+		qObj = graph.queryPoint(newStop.geometry.coordinates);	//find closest edge in the graph
+		graph.splitEdge(qObj.v1,qObj.v2,newStop,qObj.position);
+		i1 = stops.indexOf(qObj.v1);
+		i2 = stops.indexOf(qObj.v2);
+		i = Math.max(i1,i2);//The assumption is that since they are associated they are right next to eachother in the list;
+		stops.splice(i,0,id);
+		sDict[id] = newStop;
+		return id;
+	}
+
+	var deletePoint = function(stopObj){
+		var stopList = [],
+		id = stopObj.properties.stop_id,
+		inx = stops.indexOf(id);
+		if(inx === 0)
+			stopList.push(stops[1]);
+		else if (inx === stops.length-1){
+			stopList.push(stops[stops.length-2])
+		}else{
+			stopList.push(stops[inx-1])
+			stopList.push(stops[inx+1])
+		}
+		stops.splice(inx,1); //remove the element from the stopList
+		graph.deleteNode(id,stopList); //remove it's node from the graph
+		delete sDict[id]
+	}
+
+	return {
+		update:updateMap,
+		init:init, 
+		reset:reset, 
+		save:save,
+		addPoint,addPoint,
+		deletePoint:deletePoint,
+	};
 })();
 
 

@@ -25,7 +25,8 @@ var databox = (function(){
 	    			padding:0,
 	    			margin:0,
 	    			'text-align':'center',
-	    			'background-color':'#ddd'
+	    			'background-color':'#ddd',
+	    			'overflow':'hidden',
 	    		}
 	    	}());
 	    	return dbox;
@@ -51,9 +52,10 @@ var databox = (function(){
 			if(route_id === 'None'){
 				return;
 			}
+			plotmod.plotFeatsBack(routes);
 			console.log(scheds[route_id]);
 			var trips = tripbox.selectAll('div').data(scheds[route_id].trips);
-			trips.enter().append('div')
+			var tripwindows = trips.enter().append('div')
 					.attr('class','tripinfo')
 					.style({
 						position:'relative',
@@ -61,15 +63,12 @@ var databox = (function(){
 						'background-color':'green',
 						overflow:'hidden',
 					})
-					.html(function(trip,i){
-						return '<p>Trip: ' + i + '</p>';
-						
-					}).append('button').html(function(d,i){
-						return 'Edit' + i;
+			tripwindows.append('button').html(function(d,i){
+						return 'Edit ' + i;
 					}).on('click',function(trip){
 						var currstops={type:'FeatureCollection',features:[]},stopDict = {},buildobj ={};
-						update.reset();
 						console.log(trip.id);
+						update.reset();
 						plotmod.clear();
 						//filter stops to current route
 						currstops.features = stops.features.filter(function(d){return d.properties.routes.indexOf(route_id) >= 0})
@@ -79,7 +78,11 @@ var databox = (function(){
 			    		});
 			    		buildobj[route_id] = trip;
 			    		update.init(stopDict,buildobj,{},plotmod);
-					})
+					});
+			tripwindows.append('button').html('<em>Save</em>')
+						.on('click',function(trip){
+							console.log(update.save());
+						});
 			trips.exit().remove();
 		});
 	};

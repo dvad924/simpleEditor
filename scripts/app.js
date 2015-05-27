@@ -36,7 +36,8 @@ var databox = (function(){
 	    			padding:0,
 	    			margin:0,
 	    			'text-align':'center',
-	    			'background-color':'#ddd'
+	    			'background-color':'#ddd',
+	    			'overflow':'hidden',
 	    		}
 	    	}());
 	    	return dbox;
@@ -62,9 +63,10 @@ var databox = (function(){
 			if(route_id === 'None'){
 				return;
 			}
+			plotmod.plotFeatsBack(routes);
 			console.log(scheds[route_id]);
 			var trips = tripbox.selectAll('div').data(scheds[route_id].trips);
-			trips.enter().append('div')
+			var tripwindows = trips.enter().append('div')
 					.attr('class','tripinfo')
 					.style({
 						position:'relative',
@@ -72,15 +74,12 @@ var databox = (function(){
 						'background-color':'green',
 						overflow:'hidden',
 					})
-					.html(function(trip,i){
-						return '<p>Trip: ' + i + '</p>';
-						
-					}).append('button').html(function(d,i){
-						return 'Edit' + i;
+			tripwindows.append('button').html(function(d,i){
+						return 'Edit ' + i;
 					}).on('click',function(trip){
 						var currstops={type:'FeatureCollection',features:[]},stopDict = {},buildobj ={};
-						update.reset();
 						console.log(trip.id);
+						update.reset();
 						plotmod.clear();
 						//filter stops to current route
 						currstops.features = stops.features.filter(function(d){return d.properties.routes.indexOf(route_id) >= 0})
@@ -90,7 +89,11 @@ var databox = (function(){
 			    		});
 			    		buildobj[route_id] = trip;
 			    		update.init(stopDict,buildobj,{},plotmod);
-					})
+					});
+			tripwindows.append('button').html('<em>Save</em>')
+						.on('click',function(trip){
+							console.log(update.save());
+						});
 			trips.exit().remove();
 		});
 	};
@@ -101,7 +104,7 @@ var databox = (function(){
 })();
 
 module.exports = databox;
-},{"./plotmod":10,"./update":11}],3:[function(require,module,exports){
+},{"./plotmod":11,"./update":12}],3:[function(require,module,exports){
 var featurebuilder = function(sDict, Obj){
 
 	var fbosrm = function(sDict,osrm){
@@ -120,13 +123,23 @@ var featurebuilder = function(sDict, Obj){
 module.exports = featurebuilder;
 },{}],4:[function(require,module,exports){
 L = require('./bower_components/leaflet/dist/leaflet');
-// require('./node_modules/leaflet-path-drag/dist/L.Path.Drag');
+require('./node_modules/leaflet-path-drag/dist/L.Path.Drag');
 require('./node_modules/leaflet-geometryutil/dist/leaflet.geometryutil');
 // require('./Leaflet.Snap/leaflet.snap');
 var update = require('./update');
 
 
 var Lext = (function(L){
+  var markerOptions = {                  
+                   color: "#000",
+                   weight: 1,
+                   opacity: 1,
+                   fillOpacity: 1,
+                   stroke:false,
+                   fillColor:'#000',
+                   radius:5,
+                   draggable:true,
+               };
 	var layers = {};
 	var getStopLayer = function(){
     return layers['stops'];
@@ -134,7 +147,12 @@ var Lext = (function(L){
   var getPathLayer = function(){
     return layers['paths'];
   }
-
+  var getBackgroundLayer = function(){
+    return layers['background'];
+  }
+  var getFocusLayers = function(){
+    return [getStopLayer(),getPathLayer()];
+  }
   var getAllLayers = function(){
     var layerList = [];
     Object.keys(layers).forEach(function(id){
@@ -143,42 +161,58 @@ var Lext = (function(L){
     })
     return layerList;
   }
-
-  var addroutes = function(rdata,map){
-		var bounds = [];
-
-		// bounds.push(rdata.bbox.splice(0,2).reverse());
-		// bounds.push(rdata.bbox.reverse());
+  var addroutes = function(rdata,map,fit){
 		layers['paths'] = L.geoJson(rdata, {
 			style:function(feature){
 				return {
 					//color:'#'+feature.properties.route_color,
-					opacity: 0.9,
-					weight:5,
-
+					opacity: 1,
+					weight:10,
 				};
 			},
-
+      onEachFeature:function(feat,layer){
+        var tempMarker;
+        layer.on('click',function(){
+          layers.stops.addLayer(tempMarker);
+          tempMarker = undefined;
+        });
+        layer.on('mouseout',function(){
+          if(tempMarker)
+            map.removeLayer(tempMarker);
+        })
+        layer.on('mouseover',function(e){
+          tempMarker = L.marker(e.latlng,markerOptions);
+          tempMarker.addTo(map);
+        })
+        layer.on('mousemove',function(e){
+          if(tempMarker)
+            tempMarker.setLatLng(e.latlng);
+        })
+      }
 		});
 		layers.paths.addTo(map);
-		map.fitBounds(layers.paths.getBounds());
+    layers.paths.bringToBack();
+    if(fit){
+      map.fitBounds(layers.paths.getBounds());  
+    }	
 	}
+  var addroutesBack = function(rdata,map){
+    layers['background'] = L.geoJson(rdata, {
+      style:function(feature){
+        return{
+          opacity:0.2,
+          weight:1,
+        };
+      },
+    });
+    layers.background.addTo(map);
+  };
 	var addstops = function(sdata,map){
-
 		layers['stops'] = L.geoJson(sdata,{
    				pointToLayer: function (d, latlng) {
-               	var options = {                  
-                   color: "#000",
-                   weight: 3,
-                   opacity: 1,
-                   fillOpacity: 0.8,
-                   stroke:false,
-                   fillColor:'#a00',
-                   radius:10,
-                   draggable:true,
+               	
 
-               };
-               var obj = L.marker(latlng,options);
+               var obj = L.marker(latlng,markerOptions);
                //While dragging populate the infobox with imperative info.
                 obj.on('drag',function(){
                		var lat = obj._latlng.lat;
@@ -191,31 +225,59 @@ var Lext = (function(L){
                   obj.feature.geometry.coordinates[0] = obj._latlng.lng;
                   obj.feature.geometry.coordinates[1] = obj._latlng.lat;
                   update.update(obj.feature);
-
+               })
+               obj.on('dblclick',function(){
+                   map.removeLayer(layers.paths);
+                   update.deletePoint(obj.feature);
+                   update.update();
                })
                return obj;
 			    },
-			    onEachFeature: function(f,layer){
-
-			    }
-
+          onEachFeature:function(f,layer){
+            layer.bindPopup(f.properties.stop_id); 
+          }
 			})
+      layers.stops.on('layeradd',function(e){
+          var marker = e.layer; //This makes the reasonable assumption that the only layers to be added to this layer group will be markers
+          var stopPoint = marker._latlng;
+          var coors = [stopPoint.lng,stopPoint.lat];
+
+          var buildFeat = function(id){
+            var feature = {type:'Feature',geometry:{type:'Point',coordinates:coors},properties:{stop_id:id}};
+            return feature;
+          }
+          var id = update.addPoint(buildFeat()); //id will be undefined when adding but it will be done in the update module.
+          update.update();
+      //     marker.on('drag',function(){
+      //       var lat = marker._latlng.lat;
+      //       var lng = marker._latlng.lng;
+      //       var box = d3.select('#infobox');
+      //       box.html('<h2>New Stop</h2><p> lat: '+lat+'</p><p> long: ',+lng+'</p>');
+      //     })
+      //     marker.on('dragend',function(){
+      //       map.removeLayer(layers.paths);
+      //       var lat = marker._latlng.lat;
+      //       var lng = marker._latlng.lng;
+      //       var feat = buildFeat(id)
+      //       update.update(feat);
+      //     })
+      //     marker.on('dblclick',function(){
+      //       map.removeLayer(layers.paths);
+      //       update.deletePoint(buildFeat(id));
+      //       update.update();
+      //     })
+      })
    		layers.stops.addTo(map);
-   		//make each stop marker snapable to the routes.
-   		// Object.keys(stopLayer._layers).forEach(function(markerid){
-   		// 	marker = stopLayer._layers[markerid];
-   		// 	marker.snapediting = new L.Handler.MarkerSnap(map, marker);
-     //    	marker.snapediting.addGuideLayer(stateLayer);
-     //    	marker.snapediting.enable();
-   		// });
 	}
   
 	return {
     addroutes:addroutes,
+    addroutesBack:addroutesBack,
     addstops:addstops, 
     getstoplayer:getStopLayer,
     getpathlayer:getPathLayer,
-    getAllLayers:getAllLayers
+    getAllLayers:getAllLayers,
+    getFocusLayers:getFocusLayers,
   };
 })(L);
 
@@ -223,7 +285,7 @@ module.exports = {extension:Lext , L:L};
 
 
 
-},{"./bower_components/leaflet/dist/leaflet":1,"./node_modules/leaflet-geometryutil/dist/leaflet.geometryutil":7,"./update":11}],5:[function(require,module,exports){
+},{"./bower_components/leaflet/dist/leaflet":1,"./node_modules/leaflet-geometryutil/dist/leaflet.geometryutil":7,"./node_modules/leaflet-path-drag/dist/L.Path.Drag":8,"./update":12}],5:[function(require,module,exports){
 //livegtfsapi.js
 
 
@@ -2235,6 +2297,24 @@ if(typeof module !== 'undefined'){
 	module.exports = livegtfs;
 }
 },{}],6:[function(require,module,exports){
+
+var dist2 = function(x1,y1,x2,y2){
+    return (x1-x2)*(x1-x2) + (y1-y2)*(y1-y2);
+}
+
+var pastPoint = function(p1,p2,q){
+    var v1 = [ p1[0] - p2[0], p1[1] -p2[1] ],   //get the two vectors
+    qvec   = [ q[0] - p2[0], q[1] - p2[1] ],
+    dot    = v1[0]*qvec[0] + v1[1]*qvec[1];      //take the dot product
+                                                //if the cosine of the angle between the two vectors is greater than
+                                                //zero then it lies in the space 
+    if(dot > 0)
+        return 0
+    else
+        return 1
+
+}
+
 var miniGraph = function(){
     //node object that will be verticies of a graph
     var node = function(v){
@@ -2243,17 +2323,27 @@ var miniGraph = function(){
 		this.addadj = function(v){
 		    this.adjs.push(v.toString());
 		}
+        this.addnodeadj = function(node){
+            this.adjs.push(node.val);
+        }
+        this.removeadj = function(v){
+            var i = this.adjs.indexOf(v.toString());
+            this.adjs.splice(i,1); //remove that one id from it's adjacency list
+        }
 		this.isLinked = function(v){
 		    return this.adjs.indexOf(v.toString()) >= 0;
 		}
-		this.getNeihbors = function(){
+        this.isConnected = function(){
+            return this.adjs.length > 0;
+        }
+		this.getNeighbors = function(){
 			return this.adjs;
 		}
     }
     //An edge contains refereces to 2 nodes in the graph
     //as well as extra data that needs to be associated with them.
     var edge = function(n1,n2,data){
-    	this.id = n1.val + n2.val; //concatenate identifying strings of the nodes to form an edge id
+    	this.id = n1.val + '&' + n2.val; //concatenate identifying strings of the nodes to form an edge id
     	this.data = data;
     }
     //list of nodes for the current graph
@@ -2263,7 +2353,7 @@ var miniGraph = function(){
     this.isEmpty = function(){
     	return this.numedges <= 0;
     }
-    this.queryNode = function(v1){
+    this.getNode = function(v1){
 		return this.nodes[v1.toString()];
     }
     this.insertNode = function(v1){
@@ -2274,14 +2364,110 @@ var miniGraph = function(){
     //Function to determine if a given edge
     //currently resides within the graph
     this.testEdge = function(v1,v2){
-		var n1 = this.queryNode(v1);
-		var n2 = this.queryNode(v2);
+		var n1 = this.getNode(v1);
+		var n2 = this.getNode(v2);
 		if( n1 && n2 ){
 		    return n1.isLinked(v2);
 		}else{
 		    return false;
 		}
     };
+
+    this.queryPoint = function(coors){
+        var x = coors[0];
+        var y = coors[1];
+        var edges = this.edges;
+        var pos,id;
+        var mindist = Infinity;
+        Object.keys(edges).forEach(function(eid){
+            var edge = edges[eid];
+            var line = edge.data.geometry.coordinates.forEach(function(coorPair,i){
+                var x1 = coorPair[0], y1 = coorPair[1];
+                var d  = dist2(x,y,x1,y1);
+                if(d < mindist){
+                    mindist = d;
+                    pos = i;
+                    id = eid;
+                }
+            });
+        });
+        var vids = id.split('&');
+        return {position:pos, v1:vids[0], v2:vids[1]};
+    }
+
+    this.splitEdge = function(v1,v2,newv,pos){
+        var edge = this.getEdge(v1,v2);
+        var seg1,seg2,newid,inx;
+
+        if(pos !== 0){
+            var p1 = edge.data.geometry.coordinates[pos-1];
+            var p2 = edge.data.geometry.coordinates[pos];
+            var q  = newv.geometry.coordinates;
+            inx = pos + pastPoint(p1,p2,q);
+        }else if(pos === 1){
+            inx = pos+1;
+        }
+        
+        seg1 =  edge.data.geometry.coordinates.splice(0, inx);
+        seg2 =  edge.data.geometry.coordinates.map(function(x){return x;});
+        this.deleteEdge(v1,v2); //this will destroy the edge variable
+        newid = newv.properties.stop_id;
+        this.addEdge(v1,newid,seg1);
+        this.addEdge(v2,newid,seg2);
+    };
+
+    this.bridgeNode = function(victim,survive1,survive2){
+        var s1 = this.getNode(survive1),
+        v = this.getNode(victim),
+        s2 = this.getNode(survive2),
+        edge1 = this.getEdge(survive1,victim),
+        edge2 = this.getEdge(victim,survive2),
+        line1 = edge1.data.geometry.coordinates,
+        line2 = edge2.data.geometry.coordinates;
+        
+        line1.concat(line2);    //order here could matter!!
+
+        
+        this.deleteEdge(survive1,victim); //delete the previous edges
+        this.deleteEdge(victim,survive2); //this could delete victim
+        // s1.removeadj(v);    //remove victim node from the other 2
+        // s2.removeadj(v);    //
+
+        data = {type:'Feature', properties:{}, geometry:{type:'LineString',coordinates:line1}};
+        this.addEdge(survive1,survive2,data);
+    }
+
+    //delete a node from the graph assuming the
+    //only 2 neighbor structure
+    this.deleteNode = function(victim, nodelist){
+        var node = this.getNode(victim)
+        if(nodelist.length === 2){
+            this.bridgeNode(victim,nodelist[0],nodelist[1]);
+        }else{
+            this.deleteEdge(victim,nodelist[0]);
+        }
+    }
+
+    //Function to disassociate two nodes in the graph
+    //by removing the edge in between them
+    //if the
+    this.deleteEdge = function(v1,v2){
+        var n1 = this.getNode(v1);
+        var n2 = this.getNode(v2);    
+        var currEdge = this.getEdge(v1,v2);
+        if(currEdge){
+            delete this.edges[currEdge.id];
+            n1.removeadj(v2);
+            n2.removeadj(v1);
+            if(!n1.isConnected())
+                delete this.nodes[v1.toString()];
+            if(!n2.isConnected())
+                delete this.nodes[v1.toString()];
+            return true;
+        }
+        return false;
+
+    }
 
     //Function to add an edge to the graph
     //Edge is determined by its 2 ending 
@@ -2300,13 +2486,13 @@ var miniGraph = function(){
 		}
     };
    this.updateEdge = function(v1,v2,data){
-   	var edge = this.getEdge(v1,v2);
-   	if(edge){
-   		edge.data = data;
-   		return true;
-   	}
-   	else
-   		return false;
+    	var edge = this.getEdge(v1,v2);
+    	if(edge){
+    		edge.data = data;
+    		return true;
+    	}
+    	else
+    		return false;
    }
     //if the two vertex identifiers form an edge
     //retrieve their edge object.
@@ -2314,22 +2500,25 @@ var miniGraph = function(){
     	var retobj;
     	var id;
     	if(this.testEdge(v1,v2)){
-    		id = v1.toString() + v2.toString();
+    		id = v1.toString() +'&'+ v2.toString();
     		retobj = this.edges[id];
     		if(retobj)
     			return retobj;
-    		id = v2.toString() + v1.toString();
+    		id = v2.toString() +'&'+ v1.toString();
     		return this.edges[id];
     	}
     }
     this.toFeatureCollection = function(){
     	var featcoll = {type:'FeatureCollection',features:[]};
     	var graph = this;
+        var lineColl = [];
     	Object.keys(this.edges).forEach(function(key){
     		var data = graph.edges[key].data;
+            console.log(key);
     		if(data.type === 'Feature')
-    			featcoll.features.push(data);
+    		  lineColl.push(data.geometry.coordinates);
     	});
+        featcoll.features.push({type:'Feature',geometry:{coordinates:lineColl, type:'MultiLineString'},properties:{}});
     	return featcoll;
     }
 
@@ -2358,7 +2547,7 @@ var miniGraph = function(){
 			return pathStack;        //return the final list
 		    }
 		    
-		    var adjs = this.queryNode(t).adjs;      //if its not the end point
+		    var adjs = this.getNode(t).adjs;      //if its not the end point
 		    adjs.forEach(function(vert){ //get the nodes adjacent to the current node
 			if(set.indexOf(vert) < 0){//if the current vertex hasn't been seen
 			    queue.push(vert);     //add the vertex to the queue to be visited
@@ -2881,7 +3070,9 @@ return L.GeometryUtil;
 
 }));
 
-},{"leaflet":8}],8:[function(require,module,exports){
+},{"leaflet":9}],8:[function(require,module,exports){
+"use strict";if(L.Browser.svg){L.Path.include({_resetTransform:function(){this._container.setAttributeNS(null,"transform","")},_applyTransform:function(t){this._container.setAttributeNS(null,"transform","matrix("+t.join(" ")+")")}})}else{L.Path.include({_resetTransform:function(){if(this._skew){this._skew.on=false;this._container.removeChild(this._skew);this._skew=null}},_applyTransform:function(t){var i=this._skew;if(!i){i=this._createElement("skew");this._container.appendChild(i);i.style.behavior="url(#default#VML)";this._skew=i}var a=t[0].toFixed(8)+" "+t[1].toFixed(8)+" "+t[2].toFixed(8)+" "+t[3].toFixed(8)+" 0 0";var n=Math.floor(t[4]).toFixed()+", "+Math.floor(t[5]).toFixed()+"";var r=this._container.style;var o=parseFloat(r.left);var s=parseFloat(r.top);var e=parseFloat(r.width);var h=parseFloat(r.height);if(isNaN(o))o=0;if(isNaN(s))s=0;if(isNaN(e)||!e)e=1;if(isNaN(h)||!h)h=1;var _=(-o/e-.5).toFixed(8)+" "+(-s/h-.5).toFixed(8);i.on="f";i.matrix=a;i.origin=_;i.offset=n;i.on=true}})}L.Path.include({_onMouseClick:function(t){if(this.dragging&&this.dragging.moved()||this._map.dragging&&this._map.dragging.moved()){return}this._fireMouseEvent(t)}});"use strict";L.Handler.PathDrag=L.Handler.extend({initialize:function(t){this._path=t;this._matrix=null;this._startPoint=null;this._dragStartPoint=null},addHooks:function(){this._path.on("mousedown",this._onDragStart,this);L.DomUtil.addClass(this._path._container,"leaflet-path-draggable")},removeHooks:function(){this._path.off("mousedown",this._onDragStart,this);L.DomUtil.removeClass(this._path._container,"leaflet-path-draggable")},moved:function(){return this._path._dragMoved},_onDragStart:function(t){this._startPoint=t.containerPoint.clone();this._dragStartPoint=t.containerPoint.clone();this._matrix=[1,0,0,1,0,0];this._path._map.on("mousemove",this._onDrag,this).on("mouseup",this._onDragEnd,this);this._path._dragMoved=false},_onDrag:function(t){var i=t.containerPoint.x;var a=t.containerPoint.y;var n=i-this._startPoint.x;var r=a-this._startPoint.y;if(!this._path._dragMoved&&(n||r)){this._path._dragMoved=true;this._path.fire("dragstart")}this._matrix[4]+=n;this._matrix[5]+=r;this._startPoint.x=i;this._startPoint.y=a;this._path._applyTransform(this._matrix);this._path.fire("drag");L.DomEvent.stop(t.originalEvent)},_onDragEnd:function(t){L.DomEvent.stop(t);this._path._resetTransform();this._transformPoints(this._matrix);this._path._map.off("mousemove",this._onDrag,this).off("mouseup",this._onDragEnd,this);this._path.fire("dragend",{distance:Math.sqrt(L.LineUtil._sqDist(this._dragStartPoint,t.containerPoint))});this._matrix=null;this._startPoint=null;this._dragStartPoint=null},_transformPoints:function(t){var i=this._path;var a,n,r;var o=L.point(t[4],t[5]);var s=i._map.options.crs;var e=s.transformation;var h=s.scale(i._map.getZoom());var _=s.projection;var l=e.untransform(o,h).subtract(e.untransform(L.point(0,0),h));if(i._point){i._latlng=_.unproject(_.project(i._latlng)._add(l));i._point._add(o)}else if(i._originalPoints){for(a=0,n=i._originalPoints.length;a<n;a++){r=i._latlngs[a];i._latlngs[a]=_.unproject(_.project(r)._add(l));i._originalPoints[a]._add(o)}}if(i._holes){for(a=0,n=i._holes.length;a<n;a++){for(var g=0,d=i._holes[a].length;g<d;g++){r=i._holes[a][g];i._holes[a][g]=_.unproject(_.project(r)._add(l));i._holePoints[a][g]._add(o)}}}i._updatePath()}});L.Path.prototype.__initEvents=L.Path.prototype._initEvents;L.Path.prototype._initEvents=function(){this.__initEvents();if(this.options.draggable){if(this.dragging){this.dragging.enable()}else{this.dragging=new L.Handler.PathDrag(this);this.dragging.enable()}}else if(this.dragging){this.dragging.disable()}};(function(){L.FeatureGroup.EVENTS+=" dragstart";function t(t,i,a){for(var n=0,r=t.length;n<r;n++){var o=t[n];o.prototype["_"+i]=o.prototype[i];o.prototype[i]=a}}function i(t){if(this.hasLayer(t)){return this}t.on("drag",this._onDrag,this).on("dragend",this._onDragEnd,this);return this._addLayer.call(this,t)}function a(t){if(!this.hasLayer(t)){return this}t.off("drag",this._onDrag,this).off("dragend",this._onDragEnd,this);return this._removeLayer.call(this,t)}t([L.MultiPolygon,L.MultiPolyline],"addLayer",i);t([L.MultiPolygon,L.MultiPolyline],"removeLayer",a);var n={_onDrag:function(t){var i=t.target;this.eachLayer(function(t){if(t!==i){t._applyTransform(i.dragging._matrix)}});this._propagateEvent(t)},_onDragEnd:function(t){var i=t.target;this.eachLayer(function(t){if(t!==i){t._resetTransform();t.dragging._transformPoints(i.dragging._matrix)}});this._propagateEvent(t)}};L.MultiPolygon.include(n);L.MultiPolyline.include(n)})();
+},{}],9:[function(require,module,exports){
 /*
  Leaflet, a JavaScript library for mobile-friendly interactive maps. http://leafletjs.com
  (c) 2010-2013, Vladimir Agafonkin
@@ -12062,7 +12253,7 @@ L.Map.include({
 
 
 }(window, document));
-},{}],9:[function(require,module,exports){
+},{}],10:[function(require,module,exports){
 var swap = function(point){
 	return [point[1],point[0]];
 }
@@ -12140,7 +12331,7 @@ var osrmApi = (function(){
 	});
 
 	module.exports = osrmApi
-},{}],10:[function(require,module,exports){
+},{}],11:[function(require,module,exports){
 //plotmod
 var bundle = require('./leafletExt');
 L = bundle.L;
@@ -12158,23 +12349,38 @@ var plotter = (function(){
           attributionControl:false
         });
     new L.Control.Zoom({position:'topright'}).addTo(map);
-    plotmod.plotFeats = function(FeatColl){
-    	var layer = Lext.addroutes(FeatColl,map);
+    plotmod.plotFeats = function(FeatColl,fit){
+    	var layer = Lext.addroutes(FeatColl,map,fit);
     }
+    plotmod.plotFeatsBack = function(FeatColl){
+      var layer = Lext.addroutesBack(FeatColl,map);
+    };
     plotmod.plotStops = function(FeatColl){
     	Lext.addstops(FeatColl,map);
+    }
+    plotmod.foregroundClear = function(){
+      Lext.getFocusLayers().forEach(function(layer){
+        map.removeLayer(layer);
+      })
+    }
+    plotmod.clearStops = function(){
+      var layer = Lext.getstoplayer();
+      if(layer){
+         map.removeLayer(layer);
+      }
     }
     plotmod.clear = function(){
       Lext.getAllLayers().forEach(function(layer){
         map.removeLayer(layer);
       })
     }
+
     return plotmod;
 })();
 
 module.exports = plotter;
 
-},{"./leafletExt":4}],11:[function(require,module,exports){
+},{"./leafletExt":4}],12:[function(require,module,exports){
 var Osrm = require('./osrmapi');
 var Graph = require('./miniGraph');
 var fb 	=   require('./featurebuilder.js');
@@ -12182,58 +12388,53 @@ var updateObj = (function(){
 	var graph = new Graph(); //graph to maintain the relationships of the current tripRoute with its stops
 	var plotmod;
 	var stops;
-	var id;
 	var sDict;
-	var updatedStops;
 
 	var reset = function(){
 		graph = new Graph();
 	}
 
-	var processAccumulator = function(sDict, acc){
+	var processAccumulator = function(sDict, data){
 
-		var keys = Object.keys(acc);
-		var routeGeo = acc[keys[0]];
+		var routeGeo = data;
 		var featColl = fb(sDict,{type:'osrm',object:routeGeo}); //build the feature collection
-		if(graph.isEmpty()){
+		console.log(routeGeo);
+		var emptyGraph = graph.isEmpty();
 			for(var i =0; i< stops.length-1; i++){//Go through the list of stops on our current route
 				//Note that the via_points array in the routeGeo will be the associated with the same indicies;
 				var p1 = routeGeo.via_indices[i];	//index of first stop
 				var p2 = routeGeo.via_indices[i+1];	//index of second stop
 				var point_range = routeGeo.route_geometry.slice(p1,p2+1);
-				graph.addEdge(stops[i],stops[i+1],{type:'Feature',properties:{},geometry:{type:'LineString',coordinates:point_range}});  
+				if(emptyGraph)
+					graph.addEdge(stops[i],stops[i+1],{type:'Feature',properties:{},geometry:{type:'LineString',coordinates:point_range}});  
+				else
+					graph.updateEdge(stops[i],stops[i+1],{type:'Feature',properties:{},geometry:{type:'LineString',coordinates:point_range}})
 			}
-		}else{ // if the graph is not empty we only need to update two links
-			for(var i = 0; i < updatedStops.length-1; i++){
-				var p1 = routeGeo.via_indices[i];
-				var p2 = routeGeo.via_indices[i+1];
-				var point_range = routeGeo.route_geometry.slice(p1,p2+1);
-				graph.updateEdge(updatedStops[i],updatedStops[i+1],{type:'Feature',properties:{},geometry:{type:'LineString',coordinates:point_range}})
-			}
-		}
-		console.log(graph.toFeatureCollection());
-		plotmod.plotFeats(graph.toFeatureCollection());
+			console.log(graph);
+			stops.forEach(function(sid,i){
+				sDict[sid].geometry.coordinates = routeGeo.via_points[i];
+			})
+			displayStops(sDict,stops);
+			plotmod.plotFeats(graph.toFeatureCollection(),emptyGraph);
+		
 	}
 
 	var requestPath = function(sDict, trajectory){
 		var pathAccumulator ={};			//accumulator object for all the paths to be returned
 		var osrm = new Osrm();				//create new instance of api module
-		
 		console.log(trajectory);
 		osrm.addwaypoints(trajectory);		//add the coordinates as waypoints in the request
 		osrm.handleRequest(function(data){	//request  callback for data from osrm server
-			pathAccumulator[id] = data;		//add the data to the accumulator
-			console.log(pathAccumulator);
-			processAccumulator(sDict,pathAccumulator);
+			processAccumulator(sDict,data);
 		});	
 	}
 
 	var displayStops = function(sDict,stops){
 		var FeatColl = {type:'FeatureCollection', features:[]};
-		
 		stops.forEach(function(sid){
 			FeatColl.features.push(sDict[sid]);
 		})
+		plotmod.clearStops();
 		plotmod.plotStops(FeatColl);
 	}
 
@@ -12241,16 +12442,13 @@ var updateObj = (function(){
 	//into a single matrix;
 	var processData = function(sDict, trip){	//get simple psuedo matrix of trip traversals
 		var dataMatrix = {};
-			id = trip.id;
 			var ids = JSON.parse(trip.id);	//get the list off stops it traverses in order of arrival
 			stops = ids;
 			var coorVector = [];			
 			ids.forEach(function(id){		//for each stop that it visits
 				coorVector.push(sDict[id].geometry.coordinates);	//push that stop's coordinates into the vector
-			
-				dataMatrix[trip.id] = coorVector;	//push that vector into the matrix
 			});
-		return dataMatrix;
+		return coorVector;
 	}
 
 	//function to kickstart the application
@@ -12261,36 +12459,75 @@ var updateObj = (function(){
 		//process schedule data
 		var waypoints = processData(Dict,sched[tripid]);
 		displayStops(sDict,stops);
-		requestPath(sDict,waypoints[id]);
+		requestPath(sDict,waypoints);
 	}
-
 	var updateMap = function(stopObj){
-		var stopid = stopObj.properties.stop_id;
-		console.log(stopid);
-		sDict[stopid].geometry.coordinates = stopObj.geometry.coordinates;
-		var inx = stops.indexOf(stopid);
-		if(inx != 0 && inx != stops.length-1){
-			updatedStops = stops.slice(inx-1,inx+2);
-		}
-		else if(inx > 0){
-			updatesStops = stops.slice(inx-1,inx+1);
-		}
-		else{
-			updatedStops = stops.slice(inx,inx+2);
+		if(stopObj){
+			var stopid = stopObj.properties.stop_id;
+			console.log(stopid);
+			sDict[stopid].geometry.coordinates = stopObj.geometry.coordinates;	
 		}
 		var reqobj = [];
-		debugger;
-		updatedStops.forEach(function(sid){
+		stops.forEach(function(sid){
 			reqobj.push(sDict[sid].geometry.coordinates);
-		});
+		})
+		console.log(stops);
 		requestPath(sDict,reqobj);
 	}
-	return {update:updateMap, init:init, reset:reset};
+	var save = function(){
+
+		return {graph:graph,stops:stops,objects:sDict};
+	}
+
+	var addPoint = function(newStop){
+		var qObj,i1,i2,i;
+		var id = '';
+		do{
+			if(id !== '')
+				alert('stop already exits');
+			id = prompt('Please Enter new stop id');
+		}while(sDict[id])//poll until a new ID has been entered
+		newStop.properties.stop_id = id;
+		qObj = graph.queryPoint(newStop.geometry.coordinates);	//find closest edge in the graph
+		graph.splitEdge(qObj.v1,qObj.v2,newStop,qObj.position);
+		i1 = stops.indexOf(qObj.v1);
+		i2 = stops.indexOf(qObj.v2);
+		i = Math.max(i1,i2);//The assumption is that since they are associated they are right next to eachother in the list;
+		stops.splice(i,0,id);
+		sDict[id] = newStop;
+		return id;
+	}
+
+	var deletePoint = function(stopObj){
+		var stopList = [],
+		id = stopObj.properties.stop_id,
+		inx = stops.indexOf(id);
+		if(inx === 0)
+			stopList.push(stops[1]);
+		else if (inx === stops.length-1){
+			stopList.push(stops[stops.length-2])
+		}else{
+			stopList.push(stops[inx-1])
+			stopList.push(stops[inx+1])
+		}
+		stops.splice(inx,1); //remove the element from the stopList
+		graph.deleteNode(id,stopList); //remove it's node from the graph
+		delete sDict[id]
+	}
+
+	return {
+		update:updateMap,
+		init:init, 
+		reset:reset, 
+		save:save,
+		addPoint,addPoint,
+		deletePoint:deletePoint,
+	};
 })();
 
 
 module.exports = updateObj;
-},{"./featurebuilder.js":3,"./miniGraph":6,"./osrmapi":9}],"editor":[function(require,module,exports){
+},{"./featurebuilder.js":3,"./miniGraph":6,"./osrmapi":10}],"editor":[function(require,module,exports){
 var startApp = function(){
 	var update = require('./update');
 	var plotmod =require('./plotmod');
@@ -12299,12 +12536,10 @@ var startApp = function(){
 	var databox = require('./databox');
 
 	var agency = 12;	
-	var testR = "50-142";
 	var fetcher = livegtfs.gtfsData; //get datamod for the gtfs api
     fetcher.getRoutes(agency,function(rdata){ //fetch the raw route data from the server
     	
     	fetcher.getStops(agency,{format:'geo'},function(stopData){		//fetch raw stop data
-    		//Lext.addstops(stopData,map);
     		stopDict = {};												//define lookup dictionary for stops
     		stopData = fuzzyfixer(rdata,stopData);						//perform fuzzy fix to allow for better queries to osrm
 
@@ -12313,21 +12548,13 @@ var startApp = function(){
     		fetcher.getSchedule(agency,{Day:'Monday'},function(scheds){	//request the schedule data from the server
     			databox.init(rdata,stopData,scheds);
     			console.log(scheds);
-    			// testObj[testR] = scheds[testR];							//limit current view to 1 route for testing
-    			// console.log(testObj);					
-    			//initialfeatures = update.init(stopDict,testObj,{},plotmod);		//initialize map
     		})		
     	});
     });	
 }
 
-// bundle['edit'] = buildRoutes;
-// bundle['topojson'] = topojson;
-// bundle['osrm'] = Osrm;
-// bundle['proc'] = processData;
-// bundle['plotmod'] = plotmod;
 module.exports= startApp;
 
 
 
-},{"./databox":2,"./featurebuilder":3,"./livegtfsapi":5,"./plotmod":10,"./update":11}]},{},[]);
+},{"./databox":2,"./featurebuilder":3,"./livegtfsapi":5,"./plotmod":11,"./update":12}]},{},[]);
