@@ -103,6 +103,8 @@ var updateObj = (function(){
 			if(id !== '')
 				alert('stop already exits');
 			id = prompt('Please Enter new stop id');
+			if(id === null)
+				return;
 		}while(sDict[id])//poll until a new ID has been entered
 		newStop.properties.stop_id = id;
 		qObj = graph.queryPoint(newStop.geometry.coordinates);	//find closest edge in the graph

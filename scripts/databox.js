@@ -79,10 +79,6 @@ var databox = (function(){
 			    		buildobj[route_id] = trip;
 			    		update.init(stopDict,buildobj,{},plotmod);
 					});
-			tripwindows.append('button').html('<em>Save</em>')
-						.on('click',function(trip){
-							console.log(update.save());
-						});
 			trips.exit().remove();
 		});
 	};

@@ -6,16 +6,10 @@ var update = require('./update');
 
 
 var Lext = (function(L){
-  var markerOptions = {                  
-                   color: "#000",
-                   weight: 1,
-                   opacity: 1,
-                   fillOpacity: 1,
-                   stroke:false,
-                   fillColor:'#000',
-                   radius:5,
-                   draggable:true,
-               };
+  var divmarker = L.divIcon({
+    className:'divMarker',
+    iconSize:[10,10],
+  });
 	var layers = {};
 	var getStopLayer = function(){
     return layers['stops'];
@@ -48,22 +42,11 @@ var Lext = (function(L){
 			},
       onEachFeature:function(feat,layer){
         var tempMarker;
-        layer.on('click',function(){
+        layer.on('click',function(e){
+          tempMarker = L.marker(e.latlng,{icon:divmarker, draggable:true});
           layers.stops.addLayer(tempMarker);
           tempMarker = undefined;
         });
-        layer.on('mouseout',function(){
-          if(tempMarker)
-            map.removeLayer(tempMarker);
-        })
-        layer.on('mouseover',function(e){
-          tempMarker = L.marker(e.latlng,markerOptions);
-          tempMarker.addTo(map);
-        })
-        layer.on('mousemove',function(e){
-          if(tempMarker)
-            tempMarker.setLatLng(e.latlng);
-        })
       }
 		});
 		layers.paths.addTo(map);
@@ -86,9 +69,7 @@ var Lext = (function(L){
 	var addstops = function(sdata,map){
 		layers['stops'] = L.geoJson(sdata,{
    				pointToLayer: function (d, latlng) {
-               	
-
-               var obj = L.marker(latlng,markerOptions);
+               var obj = L.marker(latlng,{icon:divmarker,draggable:true});
                //While dragging populate the infobox with imperative info.
                 obj.on('drag',function(){
                		var lat = obj._latlng.lat;
@@ -110,7 +91,10 @@ var Lext = (function(L){
                return obj;
 			    },
           onEachFeature:function(f,layer){
-            layer.bindPopup(f.properties.stop_id); 
+
+            layer.bindPopup(f.properties.stop_id,{
+                offset:[0,-10]
+            }); 
           }
 			})
       layers.stops.on('layeradd',function(e){
@@ -123,25 +107,13 @@ var Lext = (function(L){
             return feature;
           }
           var id = update.addPoint(buildFeat()); //id will be undefined when adding but it will be done in the update module.
-          update.update();
-      //     marker.on('drag',function(){
-      //       var lat = marker._latlng.lat;
-      //       var lng = marker._latlng.lng;
-      //       var box = d3.select('#infobox');
-      //       box.html('<h2>New Stop</h2><p> lat: '+lat+'</p><p> long: ',+lng+'</p>');
-      //     })
-      //     marker.on('dragend',function(){
-      //       map.removeLayer(layers.paths);
-      //       var lat = marker._latlng.lat;
-      //       var lng = marker._latlng.lng;
-      //       var feat = buildFeat(id)
-      //       update.update(feat);
-      //     })
-      //     marker.on('dblclick',function(){
-      //       map.removeLayer(layers.paths);
-      //       update.deletePoint(buildFeat(id));
-      //       update.update();
-      //     })
+          if(id != undefined){
+            map.removeLayer(layers.paths);
+            update.update();  
+          }else{
+            layers.stops.removeLayer(marker);
+          }
+          
       })
    		layers.stops.addTo(map);
 	}
