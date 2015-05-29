@@ -1,7 +1,7 @@
 var startApp = function(){
 	var update = require('./update');
 	var plotmod =require('./plotmod');
-	var livegtfs = require('./livegtfsapi');
+	var livegtfs = require('./gtfsapi/livegtfsapiTemplate');
 	var fb = require('./featurebuilder');
 	var databox = require('./databox');
 
@@ -12,7 +12,7 @@ var startApp = function(){
     	fetcher.getStops(agency,{format:'geo'},function(stopData){		//fetch raw stop data
     		stopDict = {};												//define lookup dictionary for stops
     		stopData = fuzzyfixer(rdata,stopData);						//perform fuzzy fix to allow for better queries to osrm
-    		
+
     		console.log(stopDict)
     		fetcher.getSchedule(agency,{Day:'Monday'},function(scheds){	//request the schedule data from the server
     			databox.init(rdata,stopData,scheds);

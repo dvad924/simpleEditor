@@ -11,29 +11,30 @@ var updateObj = (function(){
 		graph = new Graph();
 	}
 
-	var processAccumulator = function(sDict, data){
 
+
+	var processAccumulator = function(sDict, data){
 		var routeGeo = data;
 		var featColl = fb(sDict,{type:'osrm',object:routeGeo}); //build the feature collection
 		console.log(routeGeo);
 		var emptyGraph = graph.isEmpty();
-			for(var i =0; i< stops.length-1; i++){//Go through the list of stops on our current route
-				//Note that the via_points array in the routeGeo will be the associated with the same indicies;
-				var p1 = routeGeo.via_indices[i];	//index of first stop
-				var p2 = routeGeo.via_indices[i+1];	//index of second stop
-				var point_range = routeGeo.route_geometry.slice(p1,p2+1);
-				if(emptyGraph)
-					graph.addEdge(stops[i],stops[i+1],{type:'Feature',properties:{},geometry:{type:'LineString',coordinates:point_range}});  
-				else
-					graph.updateEdge(stops[i],stops[i+1],{type:'Feature',properties:{},geometry:{type:'LineString',coordinates:point_range}})
-			}
-			console.log(graph);
-			stops.forEach(function(sid,i){
-				sDict[sid].geometry.coordinates = routeGeo.via_points[i];
-			})
-			displayStops(sDict,stops);
-			plotmod.plotFeats(graph.toFeatureCollection(),emptyGraph);
-		
+		for(var i =0; i< stops.length-1; i++){//Go through the list of stops on our current route
+			//Note that the via_points array in the routeGeo will be the associated with the same indicies;
+			var p1 = routeGeo.via_indices[i];	//index of first stop
+			
+			var p2 = routeGeo.via_indices[i+1];	//index of second stop
+			var point_range = routeGeo.route_geometry.slice(p1,p2+1);
+			if(emptyGraph)
+				graph.addEdge(stops[i],stops[i+1],{type:'Feature',properties:{},geometry:{type:'LineString',coordinates:point_range}});  
+			else
+				graph.updateEdge(stops[i],stops[i+1],{type:'Feature',properties:{},geometry:{type:'LineString',coordinates:point_range}})
+		}
+		console.log(graph);
+		// stops.forEach(function(sid,i){
+		// 	sDict[sid].geometry.coordinates = routeGeo.via_points[i];
+		// })
+		displayStops(sDict,stops);
+		plotmod.plotFeats(graph.toFeatureCollection(),emptyGraph);
 	}
 
 	var requestPath = function(sDict, trajectory){
@@ -69,14 +70,20 @@ var updateObj = (function(){
 	}
 
 	//function to kickstart the application
-	var init = function(Dict,sched,tripid,plotter){
+	var init = function(Dict,sched,plotter,routeData){
 		sDict = Dict;
-		tripid = Object.keys(sched)[0];				////////////////////////Set to first element for test, dev, and debug////////////////////////
 		plotmod = plotter;
 		//process schedule data
-		var waypoints = processData(Dict,sched[tripid]);
+		var waypoints = processData(Dict,sched);
 		displayStops(sDict,stops);
-		requestPath(sDict,waypoints);
+		if(!routeData){	//if there was no route data to begin with just take the trajectory 
+						//and build the route from scratch
+			requestPath(sDict,waypoints);	
+		}else{
+			//siftAndMerge(Dict,sched,routeData,graph);
+			//plotmod.plotFeats(graph.toFeatureCollection,true);
+		}
+		
 	}
 	var updateMap = function(stopObj){
 		if(stopObj){
@@ -92,7 +99,6 @@ var updateObj = (function(){
 		requestPath(sDict,reqobj);
 	}
 	var save = function(){
-
 		return {graph:graph,stops:stops,objects:sDict};
 	}
 

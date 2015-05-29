@@ -215,7 +215,6 @@ var miniGraph = function(){
         var lineColl = [];
     	Object.keys(this.edges).forEach(function(key){
     		var data = graph.edges[key].data;
-            console.log(key);
     		if(data.type === 'Feature')
     		  lineColl.push(data.geometry.coordinates);
     	});
