@@ -40,6 +40,9 @@ var plotter = (function(){
         map.removeLayer(layer);
       })
     }
+    plotmod.setSaver = function(saver){
+      Lext.setSaver(saver);
+    }
 
     return plotmod;
 })();

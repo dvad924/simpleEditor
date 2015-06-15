@@ -1,5 +1,5 @@
 L = require('./bower_components/leaflet/dist/leaflet');
-require('./node_modules/leaflet-path-drag/dist/L.Path.Drag');
+// require('./node_modules/leaflet-path-drag/dist/L.Path.Drag');
 require('./node_modules/leaflet-geometryutil/dist/leaflet.geometryutil');
 // require('./Leaflet.Snap/leaflet.snap');
 var update = require('./update');
@@ -10,7 +10,11 @@ var Lext = (function(L){
     className:'divMarker',
     iconSize:[10,10],
   });
+  var saver;
 	var layers = {};
+  var setSaver = function(saveObj){
+    saver = saveObj;
+  }
 	var getStopLayer = function(){
     return layers['stops'];
   }
@@ -82,11 +86,13 @@ var Lext = (function(L){
                   obj.feature.geometry.coordinates[0] = obj._latlng.lng;
                   obj.feature.geometry.coordinates[1] = obj._latlng.lat;
                   update.update(obj.feature);
+                  saver.attr('disabled',null);
                })
                obj.on('dblclick',function(){
                    map.removeLayer(layers.paths);
                    update.deletePoint(obj.feature);
                    update.update();
+                   saver.attr('disabled',null);
                })
                return obj;
 			    },
@@ -101,7 +107,6 @@ var Lext = (function(L){
           var marker = e.layer; //This makes the reasonable assumption that the only layers to be added to this layer group will be markers
           var stopPoint = marker._latlng;
           var coors = [stopPoint.lng,stopPoint.lat];
-
           var buildFeat = function(id){
             var feature = {type:'Feature',geometry:{type:'Point',coordinates:coors},properties:{stop_id:id}};
             return feature;
@@ -110,6 +115,7 @@ var Lext = (function(L){
           if(id != undefined){
             map.removeLayer(layers.paths);
             update.update();  
+            saver.attr('disabled',null);  //allow for saving of the data once a stop is added.
           }else{
             layers.stops.removeLayer(marker);
           }
@@ -119,6 +125,7 @@ var Lext = (function(L){
 	}
   
 	return {
+    setSaver:setSaver,
     addroutes:addroutes,
     addroutesBack:addroutesBack,
     addstops:addstops, 

@@ -43,8 +43,9 @@ var osrmApi = (function(){
 		// https://github.com/mapzen/routing/blob/gh-pages/js/leaflet_rm/L.Routing.OSRM.js
 		// Adapted from
 		// https://github.com/DennisSchiefer/Project-OSRM-Web/blob/develop/WebContent/routing/OSRM.RoutingGeometry.js
-		
-		osrm.baseUrl = 'http://osrm.mapzen.com/psv/viaroute?'
+
+		// osrm.baseUrl = 'http://osrm.mapzen.com/psv/viaroute?'
+		osrm.baseUrl = 'http://router.project-osrm.org/viaroute?'
 		osrm.addwaypoints = function(pointList){
 			var str = '';
 			pointList.forEach(function(point){
@@ -66,8 +67,13 @@ var osrmApi = (function(){
 					console.log(osrm.getUrl())
 					return;
 				}
+				console.log(resp);
 				resp.route_geometry = decode(resp.route_geometry,6).map(swap);	//otherwise decode it's geometry
 				resp.via_points = resp.via_points.map(swap);
+				
+				resp.getPath = function(i){
+					return resp.route_geometry.slice(resp.via_indices[i],resp.via_indices[i+1]+1);
+				}
 				callback(resp);									//and pass the response object to the callback
 			})		
 		}

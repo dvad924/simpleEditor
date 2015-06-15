@@ -28,7 +28,6 @@ var analysisMod = (function(){
 			var cur = intervals[i],next = intervals[i+1];
 			var delta = diffMins(cur[0],next[0]);  	//diff in start times
 			difftotal += delta;			            //average time between trip starts
-			console.log(delta);
 			delta = diffMins(intervals[i][0],intervals[i][1]);
 			lentotal += delta;
 		}

@@ -1,56 +1,56 @@
-var Osrm = require('./osrmapi');
+var DSource = require('./hereapi');
 var Graph = require('./miniGraph');
-var fb 	=   require('./featurebuilder.js');
+var SaveTracker = require('./savetracker');
+var SaveObj = require('./savemod');
+var Stop 	= require('./gtfsapi/models/stop');
+var range = function(min,max){
+	min = Math.max(min,0);
+	var list = [];
+	for(var i = min; i<= max; i++){
+		list.push(i);
+	}
+	return list;
+}
 var updateObj = (function(){
 	var graph = new Graph(); //graph to maintain the relationships of the current tripRoute with its stops
 	var plotmod;
-	var stops;
-	var sDict;
-
+	var Stops;
+	var notInit;
+	var saveTracker;
+	var deltas;
+	var Trip;
 	var reset = function(){
 		graph = new Graph();
 	}
-
-
-
-	var processAccumulator = function(sDict, data){
+	var processResponse = function(Stops, data){
 		var routeGeo = data;
-		var featColl = fb(sDict,{type:'osrm',object:routeGeo}); //build the feature collection
-		console.log(routeGeo);
 		var emptyGraph = graph.isEmpty();
+		var stops = Trip.getStops();
 		for(var i =0; i< stops.length-1; i++){//Go through the list of stops on our current route
-			//Note that the via_points array in the routeGeo will be the associated with the same indicies;
-			var p1 = routeGeo.via_indices[i];	//index of first stop
-			
-			var p2 = routeGeo.via_indices[i+1];	//index of second stop
-			var point_range = routeGeo.route_geometry.slice(p1,p2+1);
+			var point_range = routeGeo.getPath(i);
+			var data = {type:'Feature',properties:{},geometry:{type:'LineString',coordinates:point_range}}
 			if(emptyGraph)
-				graph.addEdge(stops[i],stops[i+1],{type:'Feature',properties:{},geometry:{type:'LineString',coordinates:point_range}});  
+				graph.addEdge(stops[i],stops[i+1],data);  
 			else
-				graph.updateEdge(stops[i],stops[i+1],{type:'Feature',properties:{},geometry:{type:'LineString',coordinates:point_range}})
+				graph.updateEdge(stops[i],stops[i+1],data)
 		}
-		console.log(graph);
-		// stops.forEach(function(sid,i){
-		// 	sDict[sid].geometry.coordinates = routeGeo.via_points[i];
-		// })
-		displayStops(sDict,stops);
+		deltas = routeGeo.getAllDeltas();
+		displayStops(Stops,Trip);
 		plotmod.plotFeats(graph.toFeatureCollection(),emptyGraph);
 	}
 
-	var requestPath = function(sDict, trajectory){
-		var pathAccumulator ={};			//accumulator object for all the paths to be returned
-		var osrm = new Osrm();				//create new instance of api module
-		console.log(trajectory);
-		osrm.addwaypoints(trajectory);		//add the coordinates as waypoints in the request
-		osrm.handleRequest(function(data){	//request  callback for data from osrm server
-			processAccumulator(sDict,data);
+	var requestPath = function(Stops, trajectory){
+		var dsource = new DSource();				//create new instance of api module
+		dsource.addwaypoints(trajectory);		//add the coordinates as waypoints in the request
+		dsource.handleRequest(function(data){	//request  callback for data from datasource server
+			processResponse(Stops,data);
 		});	
 	}
 
-	var displayStops = function(sDict,stops){
+	var displayStops = function(Stops,Trip){
 		var FeatColl = {type:'FeatureCollection', features:[]};
-		stops.forEach(function(sid){
-			FeatColl.features.push(sDict[sid]);
+		Trip.getStops().forEach(function(sid){
+			FeatColl.features.push(Stops.getStop(sid).getFeature());
 		})
 		plotmod.clearStops();
 		plotmod.plotStops(FeatColl);
@@ -58,52 +58,72 @@ var updateObj = (function(){
 
 	//Function  to collect the stop paths traversed by each trip
 	//into a single matrix;
-	var processData = function(sDict, trip){	//get simple psuedo matrix of trip traversals
-		var dataMatrix = {};
-			var ids = JSON.parse(trip.id);	//get the list off stops it traverses in order of arrival
-			stops = ids;
-			var coorVector = [];			
-			ids.forEach(function(id){		//for each stop that it visits
-				coorVector.push(sDict[id].geometry.coordinates);	//push that stop's coordinates into the vector
-			});
+	var getWaypoints = function(Stops,Trip){	//get simple psuedo matrix of trip traversals
+		var coorVector = [];			
+		Trip.getStops().forEach(function(id){		//for each stop that it visits
+			coorVector.push(Stops.getStop(id).getPoint());	//push that stop's coordinates into the vector
+		});
 		return coorVector;
 	}
 
 	//function to kickstart the application
-	var init = function(Dict,sched,plotter,routeData){
-		sDict = Dict;
+	var init = function(Dict,trip,plotter){
+		notInit = false;
+		Stops = Dict;
 		plotmod = plotter;
+		Trip = trip
 		//process schedule data
-		var waypoints = processData(Dict,sched);
-		displayStops(sDict,stops);
-		if(!routeData){	//if there was no route data to begin with just take the trajectory 
-						//and build the route from scratch
-			requestPath(sDict,waypoints);	
-		}else{
-			//siftAndMerge(Dict,sched,routeData,graph);
-			//plotmod.plotFeats(graph.toFeatureCollection,true);
-		}
-		
+		var waypoints = getWaypoints(Stops,Trip);
+		displayStops(Stops,trip);
+		requestPath(Stops,waypoints);	
+		saveTracker = new SaveTracker();
 	}
+
 	var updateMap = function(stopObj){
 		if(stopObj){
-			var stopid = stopObj.properties.stop_id;
-			console.log(stopid);
-			sDict[stopid].geometry.coordinates = stopObj.geometry.coordinates;	
+			var s = new Stop(stopObj);
+			s.setNew(true);
+			s.setEdited();
+			// Stops[stopid].properties.edited = true;
+			debugger;
+			var stop = Stops.getStop(s.getId())	//try to get the stop
+			if( !stop )	//if it isn't there
+				Stops.addStop(s);	//add it
+			else{ //otherwise update the coordinates
+				stop.setPoint(s.getPoint());
+				stop.setEdited();
+				stop.setNew(true);
+			}	
 		}
+		notInit = true;
 		var reqobj = [];
-		stops.forEach(function(sid){
-			reqobj.push(sDict[sid].geometry.coordinates);
+		Trip.getStops().forEach(function(sid){
+			reqobj.push(Stops.getStop(sid).getPoint());
 		})
-		console.log(stops);
-		requestPath(sDict,reqobj);
+		requestPath(Stops,reqobj);
 	}
+
 	var save = function(){
-		return {graph:graph,stops:stops,objects:sDict};
+		// return {graph:,stops:,objects:,ids:,path_id:,changelog:,deltas:};
+		return new SaveObj(graph,
+							Trip.getStops(),
+							Stops,
+							Trip.getIds(),
+							Trip.getId(),
+							saveTracker.getEventList(),
+							deltas);
+	}
+
+	var notify = function(success){
+		if(success){
+			saveTracker = new SaveTracker(); //if a save was successful reset the tracker to the new state.
+		}
 	}
 
 	var addPoint = function(newStop){
 		var qObj,i1,i2,i;
+		var nStop = new Stop(newStop);
+		var stops = Trip.getStops();
 		var id = '';
 		do{
 			if(id !== '')
@@ -111,21 +131,29 @@ var updateObj = (function(){
 			id = prompt('Please Enter new stop id');
 			if(id === null)
 				return;
-		}while(sDict[id])//poll until a new ID has been entered
-		newStop.properties.stop_id = id;
-		qObj = graph.queryPoint(newStop.geometry.coordinates);	//find closest edge in the graph
+		}while(Stops.hasStop(id))//poll until a new ID has been entered
+		nStop.setId(id);
+		nStop.setNew(true); //mark that this stop is new
+		nStop.setEdited(true); //mark that it needs to be commited.
+		nStop.addRoute(Trip.getRouteId());
+		nStop.addTrip(Trip.getId());
+		qObj = graph.queryPoint(nStop.getPoint());	//find closest edge in the graph
 		graph.splitEdge(qObj.v1,qObj.v2,newStop,qObj.position);
 		i1 = stops.indexOf(qObj.v1);
 		i2 = stops.indexOf(qObj.v2);
-		i = Math.max(i1,i2);//The assumption is that since they are associated they are right next to eachother in the list;
+		i = Math.max(i1,i2); //The assumption is that since they are associated they are right next to eachother in the list;
 		stops.splice(i,0,id);
-		sDict[id] = newStop;
+	
+		Stops.addStop(nStop); 
+		saveTracker.addEvent('i',{id:id,position:i+1,data:nStop});
 		return id;
 	}
 
 	var deletePoint = function(stopObj){
 		var stopList = [],
-		id = stopObj.properties.stop_id,
+		stops = Trip.getStops(),
+		oStop = new Stop(stopObj),
+		id = oStop.getId(),
 		inx = stops.indexOf(id);
 		if(inx === 0)
 			stopList.push(stops[1]);
@@ -135,9 +163,13 @@ var updateObj = (function(){
 			stopList.push(stops[inx-1])
 			stopList.push(stops[inx+1])
 		}
-		stops.splice(inx,1); //remove the element from the stopList
+		victimid = stops.splice(inx,1); //remove the element from the stopList
+		victim = Stops.getStop(victimid[0]);
+		victim.setDeleted(true);
+		victim.setEdited();
+		saveTracker.addEvent('d',{id:id,position:inx+1,data:victim});
 		graph.deleteNode(id,stopList); //remove it's node from the graph
-		delete sDict[id]
+		Stops.deleteStop(id);
 	}
 
 	return {
@@ -147,6 +179,7 @@ var updateObj = (function(){
 		save:save,
 		addPoint,addPoint,
 		deletePoint:deletePoint,
+		notify:notify,
 	};
 })();
 

@@ -29,7 +29,6 @@ var analysisMod = (function(){
 			var cur = intervals[i],next = intervals[i+1];
 			var delta = diffMins(cur[0],next[0]);  	//diff in start times
 			difftotal += delta;			            //average time between trip starts
-			console.log(delta);
 			delta = diffMins(intervals[i][0],intervals[i][1]);
 			lentotal += delta;
 		}
@@ -68,8 +67,14 @@ if(typeof d3 === 'undefined'){
 var plotmod = require('./plotmod');
 var update = require('./update');
 var analyzeIntervals = require('./analysisMod');
-var upload = require('./gtfsapi/livegtfsapiTemplate').gtfsData;
-
+var upload = require('./gtfsapi/gtfsdata');
+var setTrip= function(id,newlist,trips){
+	trips.forEach(function(trip){
+		if(trip.id === id){
+			trip.id = JSON.stringify(newlist);
+		}
+	})
+}
 var databox = (function(){
 	var create = function(){
 		var dbox = d3.select('body').append('div').attr('id','datawarehouse');
@@ -93,75 +98,82 @@ var databox = (function(){
 	    	}());
 	    	return dbox;
 	}
-	var init = function(routes,stops,scheds){
-		var route_ids = Object.keys(scheds);	//get the list of route iDs to be displayed
-		route_ids.unshift('None');
-		var dbox = create();
-		var select = dbox.append('div').attr('id','selectbox').append('select');
-		var options = select.selectAll('option').data(route_ids);
-		options.enter().append('option')
+	var init = function(stops,routes,agency){
+		var route_ids = routes.cloneIds().sort();	//get the list of route iDs to be displayed
+		route_ids.unshift('None');				//Add the None option to the data
+		var dbox = create();					//create and paint the box.
+		var select = dbox.append('div').attr('id','selectbox').append('select'); //add a selectbox to the div
+		var options = select.selectAll('option').data(route_ids);				//for each route_id add an option to the select box
+		options.enter().append('option')								
 			.attr('value',function(d){return d;})
 			.html(function(d){
-				return '<em>' + d + "</em>";
+				return '<em>' + d + "</em>";									//set it's display value to it's id
 			});
-		var tripbox = dbox.append('div');
+		var tripbox = dbox.append('div');										//add a sub div that will contain a list of the trips
 		tripbox.attr('id','tripbox');
-		select.on('change',function(){
-			var i = select.property('selectedIndex');
-			var route_id = options[0][i].__data__;
-			tripbox.selectAll('div').data([]).exit().remove();
-			if(route_id === 'None'){
+		tripbox.style({
+			position:'relative',
+			overflow:'hidden',
+			height:'90%'
+		})
+		var savebox = dbox.append('div');
+		savebox.attr('id','savebox');
+		var savebutton = savebox.append('button');
+		savebutton.html("Save");
+		savebutton.attr('disabled','true');
+		plotmod.setSaver(savebutton);
+														
+		select.on('change',function(){											//when the option of the select box has changed
+			var i = select.property('selectedIndex');							//get the index of the selected option
+			var route_id = options[0][i].__data__;								//set the route_id to the one selected
+			tripbox.selectAll('div').data([]).exit().remove();					//clear the div
+			if(route_id === 'None'){											//if the selection was none to nothing
 				return;
 			}
-
-			console.log(scheds[route_id]);
-			var trips = tripbox.selectAll('div').data(scheds[route_id].trips);
-			var tripwindows = trips.enter().append('div')
-					.attr('class','tripinfo')
-					.style({
+		
+			savebutton.on('click',function(){//REMEMBER, ONLY YOU CAN PREVENT USER ERRORS
+							savebutton.attr('disabled','true'); //disable button, prevent accidents
+							var saveobj = update.save(), reqobj = saveobj.getReqObj();
+							reqobj.id=agency;
+							console.log(reqobj);
+							upload.editStops(reqobj,function(err,data){
+								update.notify(!err);
+								if(err){
+									alert(err);
+									savebutton.attr('disabled','false');
+								}else{
+									saveobj.getAdded().forEach(function(d){stops.addStop(d)});
+									saveobj.markSaved();
+									setTrip(saveobj.path_id,saveobj.stops,routes.getRoute(route_id).trips);
+								}
+							});
+						});
+			var trips = tripbox.selectAll('div').data(routes.getRoute(route_id).trips);	//set the trip divs
+			var tripwindows = trips.enter().append('div')						//for each trip append a div
+				.attr('class','tripinfo')
+				.style({
 						position:'relative',
 						'border-style':'solid',
 						'background-color':'green',
 						overflow:'hidden',
 					})
-			tripwindows.append('button').html(function(d,i){
+			tripwindows.append('button').html(function(d,i){					//add an edit button to the trip's div
 						return 'Edit ' + i;
-					}).on('click',function(trip){
-						var analysis = analyzeIntervals(trip);
-						var currstops={type:'FeatureCollection',features:[]},stopDict = {},buildobj ={},tripid;
-						console.log(trip.id);
-						update.reset();
-						plotmod.clear();
-						//filter stops to current route
-						currstops.features = stops.features.filter(function(d){return d.properties.routes.indexOf(route_id) >= 0})
-	    				console.log(currstops);
-	    				currstops.features.forEach(function(stop){	//build dictionary of stops
-		    				stopDict[stop.properties.stop_id] = stop;
-			    		});
-			    		buildobj = trip;
-
-			    		update.init(stopDict,buildobj,plotmod);
+					}).on('click',function(trip){								//when the button is clicked
+						var analysis = analyzeIntervals(trip);					//analyze the trip data
+						var currstops={};
+						update.reset();											//reset the update object
+						plotmod.clear();										//clear the map
+			    		update.init(stops,trip,plotmod);						//initialize the update object
 					});
-			tripwindows.append('button').html('<em>Save</em>')
-						.on('click',function(trip){
-							var saveobj = update.save();
-							var stopCollection = {type:'FeatureCollection', features:[]};
-							saveobj.stops.forEach(function(sid){
-								stopCollection.features.push(saveobj.objects[sid]);
-							});
-							console.log(saveobj);
-							upload.editStops(stopCollection);
-							upload.editRoute(saveobj.graph.toFeatureCollection());
-						});
 			trips.exit().remove();
 		});
 	};
-
 	return {init:init}
 })();
 
 module.exports = databox;
-},{"./analysisMod":1,"./gtfsapi/livegtfsapiTemplate":7,"./plotmod":18,"./update":19}],4:[function(require,module,exports){
+},{"./analysisMod":1,"./gtfsapi/gtfsdata":5,"./plotmod":15,"./update":18}],4:[function(require,module,exports){
 var featurebuilder = function(sDict, Obj){
 
 	var fbosrm = function(sDict,osrm){
@@ -179,315 +191,6 @@ var featurebuilder = function(sDict, Obj){
 
 module.exports = featurebuilder;
 },{}],5:[function(require,module,exports){
-
-var newRGraph = (function(){
-			var Graph = function(){
-					this.numEdges  = 0;   //private variable for the number of edges
-					this.adjacencyLists = {};
-				};
-		
-				var AdjacencyList = function(){
-					this.list = new LinkedList();
-				};
-		
-				AdjacencyList.prototype.add = function(obj){
-					if(!this.list.exists(obj))
-						this.list.add(obj);
-				}
-				AdjacencyList.prototype.remove = function(obj){
-					this.list.remove(obj);
-				}
-				AdjacencyList.prototype.print = function(){
-					this.list.print();
-				}
-		
-				var Vertex = function(val){
-					this.vertex = val; 		
-				}
-		
-				Graph.prototype.addEdge = function(vertex1,vertex2){  //This function will add an edge to the graph given its endpoints
-					if(vertex1 !== vertex2){
-						this.adjacencyLists[vertex1] = this.adjacencyLists[vertex1] || new AdjacencyList();
-						this.adjacencyLists[vertex2] = this.adjacencyLists[vertex2] || new AdjacencyList();
-		
-						this.adjacencyLists[vertex1].add(vertex2);
-						this.adjacencyLists[vertex2].add(vertex1);
-						this.numEdges += 1;
-					}
-					return this;
-				}
-		
-				Graph.prototype.getVerticies = function(){
-					return Object.keys(this.adjacencyLists);
-				};
-		
-				Graph.prototype.toString = function(){
-					var adjString = '';
-					var current = null;
-					var verticies = this.getVerticies();
-					console.log(verticies.length + " verticies, " + this.numEdges + " edges");
-					for(var i =0; i< verticies.length; i++){
-						adjString = verticies[i] + ":";
-						current = this.adjacencyLists[verticies[i]].list.listHead;
-						while(current){
-							adjString += " " + current.data;
-							current = current.next;
-						}
-						console.log(adjString);
-						adjString = '';
-					}
-					return this;
-				};
-		
-				Graph.prototype.clearAdjacencies = function(vertex){
-					var adjList = this.getAdjacencies[vertex] || null;
-					if(adjList !== null){
-						this.adjacencyLists[vertex] = new LinkedList();
-					}
-				}
-		
-				Graph.prototype.bridgeVerticies = function(v1,bridge,v2){
-					var v1AdjList = this.adjacencyLists[v1].list || null;
-					var v2AdjList = this.adjacencyLists[v2].list || null;
-					this.adjacencyLists[bridge] = this.adjacencyLists[bridge] || (new LinkedList());
-					var bridgeAdjList = this.adjacencyLists[bridge];
-		
-		
-					if(v1AdjList !== null && v2AdjList !== null){
-						v1AdjList.swap(v2,bridge);
-						v2AdjList.swap(v1,bridge);
-						if(!bridgeAdjList.list.exists(v1))
-							this.adjacencyLists[bridge].list.add(v1);
-						if(!bridgeAdjList.list.exists(v2))
-		
-							this.adjacencyLists[bridge].list.add(v2);
-							
-					}else{
-						console.log("Error, unexpected vertex");
-					}
-				}
-		
-				Graph.prototype.getAdjacencies = function(vertex){
-		
-					var adjList = this.adjacencyLists[vertex] || (new AdjacencyList());
-					var array = [];
-					var tracer = adjList.list.listHead;
-					while(tracer != null){  //while tracer isn't null
-						array.push(tracer.data);
-						tracer = tracer.next;
-					}
-					return array;
-				}
-		
-		
-				function dfs(Graph,start,end){
-					var stack = new Stack();
-					stack.push(start);
-					var seenList = [];
-					seenList.push(start);
-					var parents = {};
-					if(start === end){
-						return [];
-					}
-					while(stack !== []){
-						current = stack.pop();  //get the top of the stack
-						if(current === end){	//if we found our point 
-							var pathStack = [end];
-							var child = end,parent = parents[child];
-							pathStack.unshift(parent);	
-							while(parent !== start){	//recreate path traversed with backwards parent map
-							 	child = parent;
-								parent = parents[child] || null;
-								pathStack.unshift(parent);
-							}
-							return pathStack;		//return the stack
-						}
-						//if not get the adjacencies of current node
-						var adjacencies = Graph.getAdjacencies(current); //get the Adjacencies of the current node
-						seenList.push(current);  //mark it as seen
-						for(var i=0; i< adjacencies.length; i++){  //for every node adjacent push it on the stack if unseen
-							if(seenList.indexOf(adjacencies[i]) < 0){
-								seenList.push(adjacencies[i]);
-								stack.push(adjacencies[i]);
-								parents[adjacencies[i]] = current;
-							}
-						}
-					}
-				}
-		
-				function bfs(Graph,source,target){
-					var queue = [];      //initialize a queue
-					var set = [];   //initialize the list of seen verticies
-					var parents = {}
-					queue.push(source);  // push it on the queue 
-					set.push(source);  //push it on the of verticies that we are aware of
-		
-					while( queue.length != 0 ){  //while the queue is not empty
-						var t = queue.splice(0,1)[0];   //get the first element in the queue
-						if(t === target){				//if the  current vertex is the one we are looking for stop
-							var pathStack = [target];
-							var child = target, parent = parents[child];
-							pathStack.unshift(parent);
-							while(parent !== source){
-								child = parent;
-								parent = parents[child];
-								pathStack.unshift(parent);
-							}
-							return pathStack;
-						}
-						var adjacencies = Graph.getAdjacencies(t);   // if not get the vertexes adjacent to this node
-						adjacencies.forEach(function(vert){          // for each of them
-							if(set.indexOf(vert) < 0){			 	 // if we are aware of them, ignore as they are already set to be evaluated 
-								queue.push(vert);					 // if not, add them to the queue
-								set.push(vert);						 // the set
-								parents[vert] = t;					 // and the mapping of parent nodes for reconstruction
-							}
-						});
-					}
-					debugger;
-					console.log("No Match Found",'source:',source,'target:',target);
-					return [];
-				}
-		
-			var Stack = function(){
-				this.stack = [];
-			}
-			Stack.prototype={
-				length:function(){return this.stack.length;},
-				push:  function(obj){this.stack.push(obj);},
-				pop:   function(){
-							var ret = this.stack[this.length()-1];
-							this.stack = this.stack.slice(0,this.length()-1);
-				 			return ret;
-				 			},
-				toList: 	function(){ return this.stack;}
-			}
-		
-		
-		
-			var LinkedList = function(){
-				this.length =0;
-				this.listHead = null;
-			};
-		
-			LinkedList.prototype.add = function(obj){
-		
-				var node = {
-					data:obj,
-					next:null
-				};
-				var current = this.listHead;
-				if(this.listHead === null)
-					this.listHead = node;
-				else{
-					while(current.next != null){ //loop till next node is empty
-						current = current.next;
-					}
-					//once it is empty set that link to the node;
-					current.next = node;
-				}
-				//increment the length of the list
-				this.length += 1;
-				return this;
-			};
-		
-			LinkedList.prototype.remove = function(obj){
-				var current = this.listHead;
-				if(current.data === obj){ 					//if it matches the first object just set it to the rest of the list
-					this.listHead = current.next;
-					this.length -= 1; 
-					return this
-					;
-				}else{
-					while(current && current.next.data !== obj){ //loop through the list until we fall off or find a match
-						current = current.next;
-					}
-					if(current.next.data === obj){  		// if we found a match then just skip over it to the next link
-						current.next = current.next.next;
-					}
-				}
-				if(current){  								//if we didn't fall off the list we decrement the length of the list
-					this.length -= 1;
-				}
-				return this;
-			};
-		
-			LinkedList.prototype.print = function(){
-				var tracer = this.listHead; //start at the beginning
-				while(tracer){				//while tracer isn't null continue
-					console.log(tracer.data);
-					tracer = tracer.next;
-				}
-			}
-		
-			LinkedList.prototype.exists = function(obj){
-				var tracer = this.listHead;
-				while(tracer){
-					if(tracer.data === obj)
-						return true;
-					tracer = tracer.next;
-				}
-				return false;
-			}
-		
-			LinkedList.prototype.swap = function(el, newEl){
-				var tracer = this.listHead;
-				while(tracer){
-					if(tracer.data === el){
-						tracer.data = newEl;
-					}
-					tracer = tracer.next;
-				}
-		
-			}
-		
-			var newRGraph = function(){
-					var RouteGraphs = {
-						numRoutes:0,
-						Routes:{},
-						addRoute:function(route_id){
-							if(!this.Routes[route_id]){
-								this.Routes[route_id] = new Graph();
-								this.numRoutes++;
-							}
-						},
-						printRouteGraph:function(route_id){
-							if(this.Routes[route_id])
-								this.Routes[route_id].toString();
-							else
-								console.log("Graph does not exist");
-						},
-						getRouteNodes:function(route_id){ // useful for debugging
-							if(this.Routes[route_id])
-								return this.Routes[route_id].getVerticies();
-							else
-								console.log("Graph does not exist");
-
-						},
-						addEdgeToRoute:function(route_id,v1,v2){
-							this.addRoute(route_id);
-							this.Routes[route_id].addEdge(v1,v2);
-							return this;
-						},
-						getShortestPath:function(route_id,source,target){
-							var shortestPath;
-							if(!this.Routes[route_id]){
-								return [];
-							}
-							else{
-								shortestPath = bfs(this.Routes[route_id],source,target);
-							}
-							return shortestPath;
-						}	
-					};
-					return RouteGraphs;
-				}
-				return newRGraph;
-})();
-if(typeof module !== 'undefined')
-	module.exports = newRGraph;
-
-},{}],6:[function(require,module,exports){
 var gtfsDataMod = (function(){
 		function reqUndef(varb,name){
 			if(udef(varb)){
@@ -671,11 +374,17 @@ var gtfsDataMod = (function(){
 			var Trip = function(id,route_id){
 				this.id = id;
 				this.route_id = route_id;
-				this.direction_id = 0;
 				this.intervals = [];
-				this.addInterval = function(interval){
-					this.intervals.push(interval);
+				this.start_times = [];
+				this.stop_times  = [];
+				this.addInterval = function(start,stop){
+					this.start_times.push(start);
+					this.stop_times.push(stop);
+					this.intervals.push([start,stop]);
+					if(this.start_times.length !== this.stop_times.length)
+						console.log("Interval ERROR");
 				}
+
 			}
 			var getSimpleSched = function(AgencyID,opt,cb){
 				if(reqUndef(AgencyID,'AgencyID'))
@@ -690,13 +399,14 @@ var gtfsDataMod = (function(){
 					if(err) console.log(err);
 					var Routes = {};
 					var trips = {};
+					console.log(data);
 					data.forEach(function(trip){
 						var id = JSON.stringify(trip.stops);
 						trips[id] = trips[id] || new Trip(id,trip.route_id);
-						trips[id].addInterval([trip.starting,trip.ending]);
-						if(trips[id].direction_id && trips[id].direction_id !== trip.direction_id)
-							console.log('!!!SHIFT!!!');
-						trips[id].direction_id = trip.direction_id;
+						for(var i = 0; i < trip.starts.length; i++){
+							trips[id].addInterval(trip.starts[i],trip.ends[i]);
+						}
+						trips[id].tripids = trip.trips;
 					})
 
 					Object.keys(trips).forEach(function(trip_id){
@@ -705,21 +415,21 @@ var gtfsDataMod = (function(){
 						Routes[rid] = Routes[rid] || new Route(rid);
 						Routes[rid].addTrip(trip);
 					})
-					
+					console.log(Routes);
 					if(typeof opt.route_id !== 'undefined')
 						callback(cb,Routes[opt.route_id]);
 					else
 						callback(cb,Routes);
 				})
 			}
-
-			var editStops = function(newStops){
+ 
+			var editStops = function(data,cb){
 				var url = HOST+'/data/upload/stops';
-				var data ={data:newStops};
 				d3.json(url)
 				.header('Content-Type', 'application/json')
 				.post(JSON.stringify(data),function(err,data){
 					console.log(data);
+					cb(err,data);
 				});	
 			}
 			var editRoute = function(newRoute){
@@ -749,3145 +459,418 @@ var gtfsDataMod = (function(){
 	if(module && module.exports){
 		module.exports = gtfsDataMod;
 	}
+},{}],6:[function(require,module,exports){
+var Route = function(id){
+	this.id = id;
+	this.trips = [];
+	this.ids = [];
+}
+Route.prototype.getTrip = function(id){
+	var ix = this.ids.indexOf(id);
+	if(ix >= 0)
+		return this.trips[ix];
+}
+Route.prototype.addTrip = function(trip){
+	this.trips.push(trip);
+	this.ids.push(trip.id);
+}
+Route.prototype.getId = function(){
+	return this.id;
+}
+Route.prototype.addTrips = function(){
+	return this.trips;
+}
+var Routes = function(){
+	this.routes = [];
+	this.ids 	= [];
+}
+Routes.prototype.addRoute = function(route){
+	this.routes.push(route);
+	this.ids.push(route.getId());
+}
+Routes.prototype.getRoute = function(id){
+	var ix = this.ids.indexOf(id);
+	if(ix >= 0)
+		return this.routes[ix];
+}
+Routes.prototype.getIds = function(){
+	return this.ids;
+}
+Routes.prototype.cloneIds = function(){
+	return this.ids.map(function(d){return d;});
+}
+module.exports={Route:Route,Routes:Routes};
 },{}],7:[function(require,module,exports){
-//livegtfsapi.js
-
-
-// var display = function(point){
-// 	var group = d3.select('#plot')
-// 	var datum = {type:'Feature',geometry:{coordinates:point,type:'Point'},properties:{id:point.toString()}}
-// 	group.selectAll(".test").data(datum).enter()
-// 	.append('circle')
-// 	.attr('class','test')
-// 	.attr("transform",function(d){
-// 		return "translate("+projection(d.geometry.coordinates)+")"
-// 	})
-// 	.attr("r",function(d){
-// 			return 3;
-// 	})
-// 	.style("fill","white")
-// 	.style("stroke","black");
-// }
-
-var livegtfs = (function(){
-	
-	if(!d3 || !topojson){
-		return undefined;
-	}
-	/////////////////////////////////////GraphModule//////////////////////////////////////
-	var newRGraph = require('./graphstruct');
-	// var newRGraph = (function(){
-	// 			var Graph = function(){
-	// 					this.numEdges  = 0;   //private variable for the number of edges
-	// 					this.adjacencyLists = {};
-	// 				};
-			
-	// 				var AdjacencyList = function(){
-	// 					this.list = new LinkedList();
-	// 				};
-			
-	// 				AdjacencyList.prototype.add = function(obj){
-	// 					if(!this.list.exists(obj))
-	// 						this.list.add(obj);
-	// 				}
-	// 				AdjacencyList.prototype.remove = function(obj){
-	// 					this.list.remove(obj);
-	// 				}
-	// 				AdjacencyList.prototype.print = function(){
-	// 					this.list.print();
-	// 				}
-			
-	// 				var Vertex = function(val){
-	// 					this.vertex = val; 		
-	// 				}
-			
-	// 				Graph.prototype.addEdge = function(vertex1,vertex2){  //This function will add an edge to the graph given its endpoints
-	// 					if(vertex1 !== vertex2){
-	// 						this.adjacencyLists[vertex1] = this.adjacencyLists[vertex1] || new AdjacencyList();
-	// 						this.adjacencyLists[vertex2] = this.adjacencyLists[vertex2] || new AdjacencyList();
-			
-	// 						this.adjacencyLists[vertex1].add(vertex2);
-	// 						this.adjacencyLists[vertex2].add(vertex1);
-	// 						this.numEdges += 1;
-	// 					}
-	// 					return this;
-	// 				}
-			
-	// 				Graph.prototype.getVerticies = function(){
-	// 					return Object.keys(this.adjacencyLists);
-	// 				};
-			
-	// 				Graph.prototype.toString = function(){
-	// 					var adjString = '';
-	// 					var current = null;
-	// 					var verticies = this.getVerticies();
-	// 					console.log(verticies.length + " verticies, " + this.numEdges + " edges");
-	// 					for(var i =0; i< verticies.length; i++){
-	// 						adjString = verticies[i] + ":";
-	// 						current = this.adjacencyLists[verticies[i]].list.listHead;
-	// 						while(current){
-	// 							adjString += " " + current.data;
-	// 							current = current.next;
-	// 						}
-	// 						console.log(adjString);
-	// 						adjString = '';
-	// 					}
-	// 					return this;
-	// 				};
-			
-	// 				Graph.prototype.clearAdjacencies = function(vertex){
-	// 					var adjList = this.getAdjacencies[vertex] || null;
-	// 					if(adjList !== null){
-	// 						this.adjacencyLists[vertex] = new LinkedList();
-	// 					}
-	// 				}
-			
-	// 				Graph.prototype.bridgeVerticies = function(v1,bridge,v2){
-	// 					var v1AdjList = this.adjacencyLists[v1].list || null;
-	// 					var v2AdjList = this.adjacencyLists[v2].list || null;
-	// 					this.adjacencyLists[bridge] = this.adjacencyLists[bridge] || (new LinkedList());
-	// 					var bridgeAdjList = this.adjacencyLists[bridge];
-			
-			
-	// 					if(v1AdjList !== null && v2AdjList !== null){
-	// 						v1AdjList.swap(v2,bridge);
-	// 						v2AdjList.swap(v1,bridge);
-	// 						if(!bridgeAdjList.list.exists(v1))
-	// 							this.adjacencyLists[bridge].list.add(v1);
-	// 						if(!bridgeAdjList.list.exists(v2))
-			
-	// 							this.adjacencyLists[bridge].list.add(v2);
-								
-	// 					}else{
-	// 						console.log("Error, unexpected vertex");
-	// 					}
-	// 				}
-			
-	// 				Graph.prototype.getAdjacencies = function(vertex){
-			
-	// 					var adjList = this.adjacencyLists[vertex] || (new AdjacencyList());
-	// 					var array = [];
-	// 					var tracer = adjList.list.listHead;
-	// 					while(tracer != null){  //while tracer isn't null
-	// 						array.push(tracer.data);
-	// 						tracer = tracer.next;
-	// 					}
-	// 					return array;
-	// 				}
-			
-			
-	// 				function dfs(Graph,start,end){
-	// 					var stack = new Stack();
-	// 					stack.push(start);
-	// 					var seenList = [];
-	// 					seenList.push(start);
-	// 					var parents = {};
-	// 					if(start === end){
-	// 						return [];
-	// 					}
-	// 					while(stack !== []){
-	// 						current = stack.pop();  //get the top of the stack
-	// 						if(current === end){	//if we found our point 
-	// 							var pathStack = [end];
-	// 							var child = end,parent = parents[child];
-	// 							pathStack.unshift(parent);	
-	// 							while(parent !== start){	//recreate path traversed with backwards parent map
-	// 							 	child = parent;
-	// 								parent = parents[child] || null;
-	// 								pathStack.unshift(parent);
-	// 							}
-	// 							return pathStack;		//return the stack
-	// 						}
-	// 						//if not get the adjacencies of current node
-	// 						var adjacencies = Graph.getAdjacencies(current); //get the Adjacencies of the current node
-	// 						seenList.push(current);  //mark it as seen
-	// 						for(var i=0; i< adjacencies.length; i++){  //for every node adjacent push it on the stack if unseen
-	// 							if(seenList.indexOf(adjacencies[i]) < 0){
-	// 								seenList.push(adjacencies[i]);
-	// 								stack.push(adjacencies[i]);
-	// 								parents[adjacencies[i]] = current;
-	// 							}
-	// 						}
-	// 					}
-	// 				}
-			
-	// 				function bfs(Graph,source,target){
-	// 					var queue = [];      //initialize a queue
-	// 					var set = [];   //initialize the list of seen verticies
-	// 					var parents = {}
-	// 					queue.push(source);  // push it on the queue 
-	// 					set.push(source);  //push it on the of verticies that we are aware of
-			
-	// 					while( queue.length != 0 ){  //while the queue is not empty
-	// 						var t = queue.splice(0,1)[0];   //get the first element in the queue
-	// 						if(t === target){				//if the  current vertex is the one we are looking for stop
-	// 							var pathStack = [target];
-	// 							var child = target, parent = parents[child];
-	// 							pathStack.unshift(parent);
-	// 							while(parent !== source){
-	// 								child = parent;
-	// 								parent = parents[child];
-	// 								pathStack.unshift(parent);
-	// 							}
-	// 							return pathStack;
-	// 						}
-	// 						var adjacencies = Graph.getAdjacencies(t);   // if not get the vertexes adjacent to this node
-	// 						adjacencies.forEach(function(vert){          // for each of them
-	// 							if(set.indexOf(vert) < 0){			 	 // if we are aware of them, ignore as they are already set to be evaluated 
-	// 								queue.push(vert);					 // if not, add them to the queue
-	// 								set.push(vert);						 // the set
-	// 								parents[vert] = t;					 // and the mapping of parent nodes for reconstruction
-	// 							}
-	// 						});
-	// 					}
-	// 					console.log("No Match Found");
-	// 					return [];
-	// 				}
-			
-	// 			var Stack = function(){
-	// 				this.stack = [];
-	// 			}
-	// 			Stack.prototype={
-	// 				length:function(){return this.stack.length;},
-	// 				push:  function(obj){this.stack.push(obj);},
-	// 				pop:   function(){
-	// 							var ret = this.stack[this.length()-1];
-	// 							this.stack = this.stack.slice(0,this.length()-1);
-	// 				 			return ret;
-	// 				 			},
-	// 				toList: 	function(){ return this.stack;}
-	// 			}
-			
-			
-			
-	// 			var LinkedList = function(){
-	// 				this.length =0;
-	// 				this.listHead = null;
-	// 			};
-			
-	// 			LinkedList.prototype.add = function(obj){
-			
-	// 				var node = {
-	// 					data:obj,
-	// 					next:null
-	// 				};
-	// 				var current = this.listHead;
-	// 				if(this.listHead === null)
-	// 					this.listHead = node;
-	// 				else{
-	// 					while(current.next != null){ //loop till next node is empty
-	// 						current = current.next;
-	// 					}
-	// 					//once it is empty set that link to the node;
-	// 					current.next = node;
-	// 				}
-	// 				//increment the length of the list
-	// 				this.length += 1;
-	// 				return this;
-	// 			};
-			
-	// 			LinkedList.prototype.remove = function(obj){
-	// 				var current = this.listHead;
-	// 				if(current.data === obj){ 					//if it matches the first object just set it to the rest of the list
-	// 					this.listHead = current.next;
-	// 					this.length -= 1; 
-	// 					return this
-	// 					;
-	// 				}else{
-	// 					while(current && current.next.data !== obj){ //loop through the list until we fall off or find a match
-	// 						current = current.next;
-	// 					}
-	// 					if(current.next.data === obj){  		// if we found a match then just skip over it to the next link
-	// 						current.next = current.next.next;
-	// 					}
-	// 				}
-	// 				if(current){  								//if we didn't fall off the list we decrement the length of the list
-	// 					this.length -= 1;
-	// 				}
-	// 				return this;
-	// 			};
-			
-	// 			LinkedList.prototype.print = function(){
-	// 				var tracer = this.listHead; //start at the beginning
-	// 				while(tracer){				//while tracer isn't null continue
-	// 					console.log(tracer.data);
-	// 					tracer = tracer.next;
-	// 				}
-	// 			}
-			
-	// 			LinkedList.prototype.exists = function(obj){
-	// 				var tracer = this.listHead;
-	// 				while(tracer){
-	// 					if(tracer.data === obj)
-	// 						return true;
-	// 					tracer = tracer.next;
-	// 				}
-	// 				return false;
-	// 			}
-			
-	// 			LinkedList.prototype.swap = function(el, newEl){
-	// 				var tracer = this.listHead;
-	// 				while(tracer){
-	// 					if(tracer.data === el){
-	// 						tracer.data = newEl;
-	// 					}
-	// 					tracer = tracer.next;
-	// 				}
-			
-	// 			}
-			
-	// 			var newRGraph = function(){
-	// 					var RouteGraphs = {
-	// 						numRoutes:0,
-	// 						Routes:{},
-	// 						addRoute:function(route_id){
-	// 							if(!this.Routes[route_id]){
-	// 								this.Routes[route_id] = new Graph();
-	// 								this.numRoutes++;
-	// 							}
-	// 						},
-	// 						printRouteGraph:function(route_id){
-	// 							if(this.Routes[route_id])
-	// 								this.Routes[route_id].toString();
-	// 							else
-	// 								console.log("Graph does not exist");
-	// 						},
-	// 						getRouteNodes:function(route_id){ // useful for debugging
-	// 							if(this.Routes[route_id])
-	// 								return this.Routes[route_id].getVerticies();
-	// 							else
-	// 								console.log("Graph does not exist");
-
-	// 						},
-	// 						addEdgeToRoute:function(route_id,v1,v2){
-	// 							this.addRoute(route_id);
-	// 							this.Routes[route_id].addEdge(v1,v2);
-	// 							return this;
-	// 						},
-	// 						getShortestPath:function(route_id,source,target){
-	// 							var shortestPath;
-	// 							if(!this.Routes[route_id]){
-	// 								return [];
-	// 							}
-	// 							else{
-	// 								shortestPath = bfs(this.Routes[route_id],source,target);
-	// 							}
-	// 							return shortestPath;
-	// 						}	
-	// 					};
-	// 					return RouteGraphs;
-	// 				}
-	// 				return newRGraph;
-	// })();
-	////////////////////////////////////EndGraphModule////////////////////////////////////
-
-	////////////////////////////////////segmentTree///////////////////////////////////////
-	// var segmentTree = require('./segment-tree-browser');
-	// var segmentTree = function() {
-		
-	//    * interval-query
-	//    * Copyright ÃƒÆ’Ã†â€™Ãƒâ€ Ã¢â‚¬â„¢ÃƒÆ’Ã¢â‚¬Â ÃƒÂ¢Ã¢â€šÂ¬Ã¢â€žÂ¢ÃƒÆ’Ã†â€™ÃƒÂ¢Ã¢â€šÂ¬Ã‚Â ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬ÃƒÂ¢Ã¢â‚¬Å¾Ã‚Â¢ÃƒÆ’Ã†â€™Ãƒâ€ Ã¢â‚¬â„¢ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬Ãƒâ€šÃ‚Â ÃƒÆ’Ã†â€™Ãƒâ€šÃ‚Â¢ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã…Â¡Ãƒâ€šÃ‚Â¬ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã…Â¾Ãƒâ€šÃ‚Â¢ÃƒÆ’Ã†â€™Ãƒâ€ Ã¢â‚¬â„¢ÃƒÆ’Ã¢â‚¬Â ÃƒÂ¢Ã¢â€šÂ¬Ã¢â€žÂ¢ÃƒÆ’Ã†â€™Ãƒâ€šÃ‚Â¢ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã…Â¡Ãƒâ€šÃ‚Â¬ÃƒÆ’Ã¢â‚¬Å¡Ãƒâ€šÃ‚Â ÃƒÆ’Ã†â€™Ãƒâ€ Ã¢â‚¬â„¢ÃƒÆ’Ã¢â‚¬Å¡Ãƒâ€šÃ‚Â¢ÃƒÆ’Ã†â€™Ãƒâ€šÃ‚Â¢ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬Ãƒâ€¦Ã‚Â¡ÃƒÆ’Ã¢â‚¬Å¡Ãƒâ€šÃ‚Â¬ÃƒÆ’Ã†â€™Ãƒâ€šÃ‚Â¢ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬Ãƒâ€¦Ã‚Â¾ÃƒÆ’Ã¢â‚¬Å¡Ãƒâ€šÃ‚Â¢ÃƒÆ’Ã†â€™Ãƒâ€ Ã¢â‚¬â„¢ÃƒÆ’Ã¢â‚¬Â ÃƒÂ¢Ã¢â€šÂ¬Ã¢â€žÂ¢ÃƒÆ’Ã†â€™ÃƒÂ¢Ã¢â€šÂ¬Ã‚Â ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬ÃƒÂ¢Ã¢â‚¬Å¾Ã‚Â¢ÃƒÆ’Ã†â€™Ãƒâ€ Ã¢â‚¬â„¢ÃƒÆ’Ã¢â‚¬Å¡Ãƒâ€šÃ‚Â¢ÃƒÆ’Ã†â€™Ãƒâ€šÃ‚Â¢ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬Ãƒâ€¦Ã‚Â¡ÃƒÆ’Ã¢â‚¬Å¡Ãƒâ€šÃ‚Â¬ÃƒÆ’Ã†â€™ÃƒÂ¢Ã¢â€šÂ¬Ã…Â¡ÃƒÆ’Ã¢â‚¬Å¡Ãƒâ€šÃ‚Â ÃƒÆ’Ã†â€™Ãƒâ€ Ã¢â‚¬â„¢ÃƒÆ’Ã¢â‚¬Â ÃƒÂ¢Ã¢â€šÂ¬Ã¢â€žÂ¢ÃƒÆ’Ã†â€™ÃƒÂ¢Ã¢â€šÂ¬Ã…Â¡ÃƒÆ’Ã¢â‚¬Å¡Ãƒâ€šÃ‚Â¢ÃƒÆ’Ã†â€™Ãƒâ€ Ã¢â‚¬â„¢ÃƒÆ’Ã¢â‚¬Å¡Ãƒâ€šÃ‚Â¢ÃƒÆ’Ã†â€™Ãƒâ€šÃ‚Â¢ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã…Â¡Ãƒâ€šÃ‚Â¬ÃƒÆ’Ã¢â‚¬Â¦Ãƒâ€šÃ‚Â¡ÃƒÆ’Ã†â€™ÃƒÂ¢Ã¢â€šÂ¬Ã…Â¡ÃƒÆ’Ã¢â‚¬Å¡Ãƒâ€šÃ‚Â¬ÃƒÆ’Ã†â€™Ãƒâ€ Ã¢â‚¬â„¢ÃƒÆ’Ã¢â‚¬Å¡Ãƒâ€šÃ‚Â¢ÃƒÆ’Ã†â€™Ãƒâ€šÃ‚Â¢ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã…Â¡Ãƒâ€šÃ‚Â¬ÃƒÆ’Ã¢â‚¬Â¦Ãƒâ€šÃ‚Â¾ÃƒÆ’Ã†â€™ÃƒÂ¢Ã¢â€šÂ¬Ã…Â¡ÃƒÆ’Ã¢â‚¬Å¡Ãƒâ€šÃ‚Â¢ÃƒÆ’Ã†â€™Ãƒâ€ Ã¢â‚¬â„¢ÃƒÆ’Ã¢â‚¬Â ÃƒÂ¢Ã¢â€šÂ¬Ã¢â€žÂ¢ÃƒÆ’Ã†â€™ÃƒÂ¢Ã¢â€šÂ¬Ã‚Â ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬ÃƒÂ¢Ã¢â‚¬Å¾Ã‚Â¢ÃƒÆ’Ã†â€™Ãƒâ€ Ã¢â‚¬â„¢ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬Ãƒâ€šÃ‚Â ÃƒÆ’Ã†â€™Ãƒâ€šÃ‚Â¢ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã…Â¡Ãƒâ€šÃ‚Â¬ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã…Â¾Ãƒâ€šÃ‚Â¢ÃƒÆ’Ã†â€™Ãƒâ€ Ã¢â‚¬â„¢ÃƒÆ’Ã¢â‚¬Â ÃƒÂ¢Ã¢â€šÂ¬Ã¢â€žÂ¢ÃƒÆ’Ã†â€™ÃƒÂ¢Ã¢â€šÂ¬Ã…Â¡ÃƒÆ’Ã¢â‚¬Å¡Ãƒâ€šÃ‚Â¢ÃƒÆ’Ã†â€™Ãƒâ€ Ã¢â‚¬â„¢ÃƒÆ’Ã¢â‚¬Å¡Ãƒâ€šÃ‚Â¢ÃƒÆ’Ã†â€™Ãƒâ€šÃ‚Â¢ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã…Â¡Ãƒâ€šÃ‚Â¬ÃƒÆ’Ã¢â‚¬Â¦Ãƒâ€šÃ‚Â¡ÃƒÆ’Ã†â€™ÃƒÂ¢Ã¢â€šÂ¬Ã…Â¡ÃƒÆ’Ã¢â‚¬Å¡Ãƒâ€šÃ‚Â¬ÃƒÆ’Ã†â€™Ãƒâ€ Ã¢â‚¬â„¢ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬Ãƒâ€¦Ã‚Â¡ÃƒÆ’Ã†â€™ÃƒÂ¢Ã¢â€šÂ¬Ã…Â¡ÃƒÆ’Ã¢â‚¬Å¡Ãƒâ€šÃ‚Â ÃƒÆ’Ã†â€™Ãƒâ€ Ã¢â‚¬â„¢ÃƒÆ’Ã¢â‚¬Â ÃƒÂ¢Ã¢â€šÂ¬Ã¢â€žÂ¢ÃƒÆ’Ã†â€™ÃƒÂ¢Ã¢â€šÂ¬Ã‚Â ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬ÃƒÂ¢Ã¢â‚¬Å¾Ã‚Â¢ÃƒÆ’Ã†â€™Ãƒâ€ Ã¢â‚¬â„¢ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬Ãƒâ€¦Ã‚Â¡ÃƒÆ’Ã†â€™ÃƒÂ¢Ã¢â€šÂ¬Ã…Â¡ÃƒÆ’Ã¢â‚¬Å¡Ãƒâ€šÃ‚Â¢ÃƒÆ’Ã†â€™Ãƒâ€ Ã¢â‚¬â„¢ÃƒÆ’Ã¢â‚¬Â ÃƒÂ¢Ã¢â€šÂ¬Ã¢â€žÂ¢ÃƒÆ’Ã†â€™ÃƒÂ¢Ã¢â€šÂ¬Ã…Â¡ÃƒÆ’Ã¢â‚¬Å¡Ãƒâ€šÃ‚Â¢ÃƒÆ’Ã†â€™Ãƒâ€ Ã¢â‚¬â„¢ÃƒÆ’Ã¢â‚¬Å¡Ãƒâ€šÃ‚Â¢ÃƒÆ’Ã†â€™Ãƒâ€šÃ‚Â¢ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬Ãƒâ€¦Ã‚Â¡ÃƒÆ’Ã¢â‚¬Å¡Ãƒâ€šÃ‚Â¬ÃƒÆ’Ã†â€™ÃƒÂ¢Ã¢â€šÂ¬Ã‚Â¦ÃƒÆ’Ã¢â‚¬Å¡Ãƒâ€šÃ‚Â¡ÃƒÆ’Ã†â€™Ãƒâ€ Ã¢â‚¬â„¢ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬Ãƒâ€¦Ã‚Â¡ÃƒÆ’Ã†â€™ÃƒÂ¢Ã¢â€šÂ¬Ã…Â¡ÃƒÆ’Ã¢â‚¬Å¡Ãƒâ€šÃ‚Â¬ÃƒÆ’Ã†â€™Ãƒâ€ Ã¢â‚¬â„¢ÃƒÆ’Ã¢â‚¬Â ÃƒÂ¢Ã¢â€šÂ¬Ã¢â€žÂ¢ÃƒÆ’Ã†â€™ÃƒÂ¢Ã¢â€šÂ¬Ã…Â¡ÃƒÆ’Ã¢â‚¬Å¡Ãƒâ€šÃ‚Â¢ÃƒÆ’Ã†â€™Ãƒâ€ Ã¢â‚¬â„¢ÃƒÆ’Ã¢â‚¬Å¡Ãƒâ€šÃ‚Â¢ÃƒÆ’Ã†â€™Ãƒâ€šÃ‚Â¢ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬Ãƒâ€¦Ã‚Â¡ÃƒÆ’Ã¢â‚¬Å¡Ãƒâ€šÃ‚Â¬ÃƒÆ’Ã†â€™ÃƒÂ¢Ã¢â€šÂ¬Ã‚Â¦ÃƒÆ’Ã¢â‚¬Å¡Ãƒâ€šÃ‚Â¾ÃƒÆ’Ã†â€™Ãƒâ€ Ã¢â‚¬â„¢ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬Ãƒâ€¦Ã‚Â¡ÃƒÆ’Ã†â€™ÃƒÂ¢Ã¢â€šÂ¬Ã…Â¡ÃƒÆ’Ã¢â‚¬Å¡Ãƒâ€šÃ‚Â¢ÃƒÆ’Ã†â€™Ãƒâ€ Ã¢â‚¬â„¢ÃƒÆ’Ã¢â‚¬Â ÃƒÂ¢Ã¢â€šÂ¬Ã¢â€žÂ¢ÃƒÆ’Ã†â€™ÃƒÂ¢Ã¢â€šÂ¬Ã‚Â ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬ÃƒÂ¢Ã¢â‚¬Å¾Ã‚Â¢ÃƒÆ’Ã†â€™Ãƒâ€ Ã¢â‚¬â„¢ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬Ãƒâ€šÃ‚Â ÃƒÆ’Ã†â€™Ãƒâ€šÃ‚Â¢ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã…Â¡Ãƒâ€šÃ‚Â¬ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã…Â¾Ãƒâ€šÃ‚Â¢ÃƒÆ’Ã†â€™Ãƒâ€ Ã¢â‚¬â„¢ÃƒÆ’Ã¢â‚¬Â ÃƒÂ¢Ã¢â€šÂ¬Ã¢â€žÂ¢ÃƒÆ’Ã†â€™Ãƒâ€šÃ‚Â¢ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã…Â¡Ãƒâ€šÃ‚Â¬ÃƒÆ’Ã¢â‚¬Å¡Ãƒâ€šÃ‚Â ÃƒÆ’Ã†â€™Ãƒâ€ Ã¢â‚¬â„¢ÃƒÆ’Ã¢â‚¬Å¡Ãƒâ€šÃ‚Â¢ÃƒÆ’Ã†â€™Ãƒâ€šÃ‚Â¢ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬Ãƒâ€¦Ã‚Â¡ÃƒÆ’Ã¢â‚¬Å¡Ãƒâ€šÃ‚Â¬ÃƒÆ’Ã†â€™Ãƒâ€šÃ‚Â¢ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬Ãƒâ€¦Ã‚Â¾ÃƒÆ’Ã¢â‚¬Å¡Ãƒâ€šÃ‚Â¢ÃƒÆ’Ã†â€™Ãƒâ€ Ã¢â‚¬â„¢ÃƒÆ’Ã¢â‚¬Â ÃƒÂ¢Ã¢â€šÂ¬Ã¢â€žÂ¢ÃƒÆ’Ã†â€™ÃƒÂ¢Ã¢â€šÂ¬Ã‚Â ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬ÃƒÂ¢Ã¢â‚¬Å¾Ã‚Â¢ÃƒÆ’Ã†â€™Ãƒâ€ Ã¢â‚¬â„¢ÃƒÆ’Ã¢â‚¬Å¡Ãƒâ€šÃ‚Â¢ÃƒÆ’Ã†â€™Ãƒâ€šÃ‚Â¢ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬Ãƒâ€¦Ã‚Â¡ÃƒÆ’Ã¢â‚¬Å¡Ãƒâ€šÃ‚Â¬ÃƒÆ’Ã†â€™ÃƒÂ¢Ã¢â€šÂ¬Ã‚Â¦ÃƒÆ’Ã¢â‚¬Å¡Ãƒâ€šÃ‚Â¡ÃƒÆ’Ã†â€™Ãƒâ€ Ã¢â‚¬â„¢ÃƒÆ’Ã¢â‚¬Â ÃƒÂ¢Ã¢â€šÂ¬Ã¢â€žÂ¢ÃƒÆ’Ã†â€™Ãƒâ€šÃ‚Â¢ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã…Â¡Ãƒâ€šÃ‚Â¬ÃƒÆ’Ã¢â‚¬Â¦Ãƒâ€šÃ‚Â¡ÃƒÆ’Ã†â€™Ãƒâ€ Ã¢â‚¬â„¢ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬Ãƒâ€¦Ã‚Â¡ÃƒÆ’Ã†â€™ÃƒÂ¢Ã¢â€šÂ¬Ã…Â¡ÃƒÆ’Ã¢â‚¬Å¡Ãƒâ€šÃ‚Â¢ÃƒÆ’Ã†â€™Ãƒâ€ Ã¢â‚¬â„¢ÃƒÆ’Ã¢â‚¬Â ÃƒÂ¢Ã¢â€šÂ¬Ã¢â€žÂ¢ÃƒÆ’Ã†â€™ÃƒÂ¢Ã¢â€šÂ¬Ã‚Â ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬ÃƒÂ¢Ã¢â‚¬Å¾Ã‚Â¢ÃƒÆ’Ã†â€™Ãƒâ€ Ã¢â‚¬â„¢ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬Ãƒâ€šÃ‚Â ÃƒÆ’Ã†â€™Ãƒâ€šÃ‚Â¢ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã…Â¡Ãƒâ€šÃ‚Â¬ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã…Â¾Ãƒâ€šÃ‚Â¢ÃƒÆ’Ã†â€™Ãƒâ€ Ã¢â‚¬â„¢ÃƒÆ’Ã¢â‚¬Â ÃƒÂ¢Ã¢â€šÂ¬Ã¢â€žÂ¢ÃƒÆ’Ã†â€™Ãƒâ€šÃ‚Â¢ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã…Â¡Ãƒâ€šÃ‚Â¬ÃƒÆ’Ã¢â‚¬Â¦Ãƒâ€šÃ‚Â¡ÃƒÆ’Ã†â€™Ãƒâ€ Ã¢â‚¬â„¢ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬Ãƒâ€¦Ã‚Â¡ÃƒÆ’Ã†â€™ÃƒÂ¢Ã¢â€šÂ¬Ã…Â¡ÃƒÆ’Ã¢â‚¬Å¡Ãƒâ€šÃ‚Â¢ÃƒÆ’Ã†â€™Ãƒâ€ Ã¢â‚¬â„¢ÃƒÆ’Ã¢â‚¬Â ÃƒÂ¢Ã¢â€šÂ¬Ã¢â€žÂ¢ÃƒÆ’Ã†â€™ÃƒÂ¢Ã¢â€šÂ¬Ã‚Â ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬ÃƒÂ¢Ã¢â‚¬Å¾Ã‚Â¢ÃƒÆ’Ã†â€™Ãƒâ€ Ã¢â‚¬â„¢ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬Ãƒâ€¦Ã‚Â¡ÃƒÆ’Ã†â€™ÃƒÂ¢Ã¢â€šÂ¬Ã…Â¡ÃƒÆ’Ã¢â‚¬Å¡Ãƒâ€šÃ‚Â¢ÃƒÆ’Ã†â€™Ãƒâ€ Ã¢â‚¬â„¢ÃƒÆ’Ã¢â‚¬Â ÃƒÂ¢Ã¢â€šÂ¬Ã¢â€žÂ¢ÃƒÆ’Ã†â€™ÃƒÂ¢Ã¢â€šÂ¬Ã…Â¡ÃƒÆ’Ã¢â‚¬Å¡Ãƒâ€šÃ‚Â¢ÃƒÆ’Ã†â€™Ãƒâ€ Ã¢â‚¬â„¢ÃƒÆ’Ã¢â‚¬Å¡Ãƒâ€šÃ‚Â¢ÃƒÆ’Ã†â€™Ãƒâ€šÃ‚Â¢ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬Ãƒâ€¦Ã‚Â¡ÃƒÆ’Ã¢â‚¬Å¡Ãƒâ€šÃ‚Â¬ÃƒÆ’Ã†â€™ÃƒÂ¢Ã¢â€šÂ¬Ã‚Â¦ÃƒÆ’Ã¢â‚¬Å¡Ãƒâ€šÃ‚Â¡ÃƒÆ’Ã†â€™Ãƒâ€ Ã¢â‚¬â„¢ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬Ãƒâ€¦Ã‚Â¡ÃƒÆ’Ã†â€™ÃƒÂ¢Ã¢â€šÂ¬Ã…Â¡ÃƒÆ’Ã¢â‚¬Å¡Ãƒâ€šÃ‚Â¬ÃƒÆ’Ã†â€™Ãƒâ€ Ã¢â‚¬â„¢ÃƒÆ’Ã¢â‚¬Â ÃƒÂ¢Ã¢â€šÂ¬Ã¢â€žÂ¢ÃƒÆ’Ã†â€™Ãƒâ€šÃ‚Â¢ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã…Â¡Ãƒâ€šÃ‚Â¬ÃƒÆ’Ã¢â‚¬Å¡Ãƒâ€šÃ‚Â¦ÃƒÆ’Ã†â€™Ãƒâ€ Ã¢â‚¬â„¢ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬Ãƒâ€¦Ã‚Â¡ÃƒÆ’Ã†â€™ÃƒÂ¢Ã¢â€šÂ¬Ã…Â¡ÃƒÆ’Ã¢â‚¬Å¡Ãƒâ€šÃ‚Â¡ÃƒÆ’Ã†â€™Ãƒâ€ Ã¢â‚¬â„¢ÃƒÆ’Ã¢â‚¬Â ÃƒÂ¢Ã¢â€šÂ¬Ã¢â€žÂ¢ÃƒÆ’Ã†â€™ÃƒÂ¢Ã¢â€šÂ¬Ã‚Â ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬ÃƒÂ¢Ã¢â‚¬Å¾Ã‚Â¢ÃƒÆ’Ã†â€™Ãƒâ€ Ã¢â‚¬â„¢ÃƒÆ’Ã¢â‚¬Å¡Ãƒâ€šÃ‚Â¢ÃƒÆ’Ã†â€™Ãƒâ€šÃ‚Â¢ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬Ãƒâ€¦Ã‚Â¡ÃƒÆ’Ã¢â‚¬Å¡Ãƒâ€šÃ‚Â¬ÃƒÆ’Ã†â€™ÃƒÂ¢Ã¢â€šÂ¬Ã‚Â¦ÃƒÆ’Ã¢â‚¬Å¡Ãƒâ€šÃ‚Â¡ÃƒÆ’Ã†â€™Ãƒâ€ Ã¢â‚¬â„¢ÃƒÆ’Ã¢â‚¬Â ÃƒÂ¢Ã¢â€šÂ¬Ã¢â€žÂ¢ÃƒÆ’Ã†â€™Ãƒâ€šÃ‚Â¢ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã…Â¡Ãƒâ€šÃ‚Â¬ÃƒÆ’Ã¢â‚¬Â¦Ãƒâ€šÃ‚Â¡ÃƒÆ’Ã†â€™Ãƒâ€ Ã¢â‚¬â„¢ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬Ãƒâ€¦Ã‚Â¡ÃƒÆ’Ã†â€™ÃƒÂ¢Ã¢â€šÂ¬Ã…Â¡ÃƒÆ’Ã¢â‚¬Å¡Ãƒâ€šÃ‚Â¬ÃƒÆ’Ã†â€™Ãƒâ€ Ã¢â‚¬â„¢ÃƒÆ’Ã¢â‚¬Â ÃƒÂ¢Ã¢â€šÂ¬Ã¢â€žÂ¢ÃƒÆ’Ã†â€™ÃƒÂ¢Ã¢â€šÂ¬Ã‚Â ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬ÃƒÂ¢Ã¢â‚¬Å¾Ã‚Â¢ÃƒÆ’Ã†â€™Ãƒâ€ Ã¢â‚¬â„¢ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬Ãƒâ€šÃ‚Â ÃƒÆ’Ã†â€™Ãƒâ€šÃ‚Â¢ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã…Â¡Ãƒâ€šÃ‚Â¬ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã…Â¾Ãƒâ€šÃ‚Â¢ÃƒÆ’Ã†â€™Ãƒâ€ Ã¢â‚¬â„¢ÃƒÆ’Ã¢â‚¬Â ÃƒÂ¢Ã¢â€šÂ¬Ã¢â€žÂ¢ÃƒÆ’Ã†â€™ÃƒÂ¢Ã¢â€šÂ¬Ã…Â¡ÃƒÆ’Ã¢â‚¬Å¡Ãƒâ€šÃ‚Â¢ÃƒÆ’Ã†â€™Ãƒâ€ Ã¢â‚¬â„¢ÃƒÆ’Ã¢â‚¬Å¡Ãƒâ€šÃ‚Â¢ÃƒÆ’Ã†â€™Ãƒâ€šÃ‚Â¢ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã…Â¡Ãƒâ€šÃ‚Â¬ÃƒÆ’Ã¢â‚¬Â¦Ãƒâ€šÃ‚Â¡ÃƒÆ’Ã†â€™ÃƒÂ¢Ã¢â€šÂ¬Ã…Â¡ÃƒÆ’Ã¢â‚¬Å¡Ãƒâ€šÃ‚Â¬ÃƒÆ’Ã†â€™Ãƒâ€ Ã¢â‚¬â„¢ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬Ãƒâ€¦Ã‚Â¡ÃƒÆ’Ã†â€™ÃƒÂ¢Ã¢â€šÂ¬Ã…Â¡ÃƒÆ’Ã¢â‚¬Å¡Ãƒâ€šÃ‚Â¦ÃƒÆ’Ã†â€™Ãƒâ€ Ã¢â‚¬â„¢ÃƒÆ’Ã¢â‚¬Â ÃƒÂ¢Ã¢â€šÂ¬Ã¢â€žÂ¢ÃƒÆ’Ã†â€™ÃƒÂ¢Ã¢â€šÂ¬Ã‚Â ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬ÃƒÂ¢Ã¢â‚¬Å¾Ã‚Â¢ÃƒÆ’Ã†â€™Ãƒâ€ Ã¢â‚¬â„¢ÃƒÆ’Ã¢â‚¬Å¡Ãƒâ€šÃ‚Â¢ÃƒÆ’Ã†â€™Ãƒâ€šÃ‚Â¢ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬Ãƒâ€¦Ã‚Â¡ÃƒÆ’Ã¢â‚¬Å¡Ãƒâ€šÃ‚Â¬ÃƒÆ’Ã†â€™ÃƒÂ¢Ã¢â€šÂ¬Ã‚Â¦ÃƒÆ’Ã¢â‚¬Å¡Ãƒâ€šÃ‚Â¡ÃƒÆ’Ã†â€™Ãƒâ€ Ã¢â‚¬â„¢ÃƒÆ’Ã¢â‚¬Â ÃƒÂ¢Ã¢â€šÂ¬Ã¢â€žÂ¢ÃƒÆ’Ã†â€™Ãƒâ€šÃ‚Â¢ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã…Â¡Ãƒâ€šÃ‚Â¬ÃƒÆ’Ã¢â‚¬Â¦Ãƒâ€šÃ‚Â¡ÃƒÆ’Ã†â€™Ãƒâ€ Ã¢â‚¬â„¢ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬Ãƒâ€¦Ã‚Â¡ÃƒÆ’Ã†â€™ÃƒÂ¢Ã¢â€šÂ¬Ã…Â¡ÃƒÆ’Ã¢â‚¬Å¡Ãƒâ€šÃ‚Â¡ÃƒÆ’Ã†â€™Ãƒâ€ Ã¢â‚¬â„¢ÃƒÆ’Ã¢â‚¬Â ÃƒÂ¢Ã¢â€šÂ¬Ã¢â€žÂ¢ÃƒÆ’Ã†â€™ÃƒÂ¢Ã¢â€šÂ¬Ã‚Â ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬ÃƒÂ¢Ã¢â‚¬Å¾Ã‚Â¢ÃƒÆ’Ã†â€™Ãƒâ€ Ã¢â‚¬â„¢ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬Ãƒâ€šÃ‚Â ÃƒÆ’Ã†â€™Ãƒâ€šÃ‚Â¢ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã…Â¡Ãƒâ€šÃ‚Â¬ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã…Â¾Ãƒâ€šÃ‚Â¢ÃƒÆ’Ã†â€™Ãƒâ€ Ã¢â‚¬â„¢ÃƒÆ’Ã¢â‚¬Â ÃƒÂ¢Ã¢â€šÂ¬Ã¢â€žÂ¢ÃƒÆ’Ã†â€™Ãƒâ€šÃ‚Â¢ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã…Â¡Ãƒâ€šÃ‚Â¬ÃƒÆ’Ã¢â‚¬Å¡Ãƒâ€šÃ‚Â ÃƒÆ’Ã†â€™Ãƒâ€ Ã¢â‚¬â„¢ÃƒÆ’Ã¢â‚¬Å¡Ãƒâ€šÃ‚Â¢ÃƒÆ’Ã†â€™Ãƒâ€šÃ‚Â¢ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬Ãƒâ€¦Ã‚Â¡ÃƒÆ’Ã¢â‚¬Å¡Ãƒâ€šÃ‚Â¬ÃƒÆ’Ã†â€™Ãƒâ€šÃ‚Â¢ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬Ãƒâ€¦Ã‚Â¾ÃƒÆ’Ã¢â‚¬Å¡Ãƒâ€šÃ‚Â¢ÃƒÆ’Ã†â€™Ãƒâ€ Ã¢â‚¬â„¢ÃƒÆ’Ã¢â‚¬Â ÃƒÂ¢Ã¢â€šÂ¬Ã¢â€žÂ¢ÃƒÆ’Ã†â€™ÃƒÂ¢Ã¢â€šÂ¬Ã‚Â ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬ÃƒÂ¢Ã¢â‚¬Å¾Ã‚Â¢ÃƒÆ’Ã†â€™Ãƒâ€ Ã¢â‚¬â„¢ÃƒÆ’Ã¢â‚¬Å¡Ãƒâ€šÃ‚Â¢ÃƒÆ’Ã†â€™Ãƒâ€šÃ‚Â¢ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬Ãƒâ€¦Ã‚Â¡ÃƒÆ’Ã¢â‚¬Å¡Ãƒâ€šÃ‚Â¬ÃƒÆ’Ã†â€™ÃƒÂ¢Ã¢â€šÂ¬Ã…Â¡ÃƒÆ’Ã¢â‚¬Å¡Ãƒâ€šÃ‚Â ÃƒÆ’Ã†â€™Ãƒâ€ Ã¢â‚¬â„¢ÃƒÆ’Ã¢â‚¬Â ÃƒÂ¢Ã¢â€šÂ¬Ã¢â€žÂ¢ÃƒÆ’Ã†â€™ÃƒÂ¢Ã¢â€šÂ¬Ã…Â¡ÃƒÆ’Ã¢â‚¬Å¡Ãƒâ€šÃ‚Â¢ÃƒÆ’Ã†â€™Ãƒâ€ Ã¢â‚¬â„¢ÃƒÆ’Ã¢â‚¬Å¡Ãƒâ€šÃ‚Â¢ÃƒÆ’Ã†â€™Ãƒâ€šÃ‚Â¢ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã…Â¡Ãƒâ€šÃ‚Â¬ÃƒÆ’Ã¢â‚¬Â¦Ãƒâ€šÃ‚Â¡ÃƒÆ’Ã†â€™ÃƒÂ¢Ã¢â€šÂ¬Ã…Â¡ÃƒÆ’Ã¢â‚¬Å¡Ãƒâ€šÃ‚Â¬ÃƒÆ’Ã†â€™Ãƒâ€ Ã¢â‚¬â„¢ÃƒÆ’Ã¢â‚¬Å¡Ãƒâ€šÃ‚Â¢ÃƒÆ’Ã†â€™Ãƒâ€šÃ‚Â¢ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã…Â¡Ãƒâ€šÃ‚Â¬ÃƒÆ’Ã¢â‚¬Â¦Ãƒâ€šÃ‚Â¾ÃƒÆ’Ã†â€™ÃƒÂ¢Ã¢â€šÂ¬Ã…Â¡ÃƒÆ’Ã¢â‚¬Å¡Ãƒâ€šÃ‚Â¢ÃƒÆ’Ã†â€™Ãƒâ€ Ã¢â‚¬â„¢ÃƒÆ’Ã¢â‚¬Â ÃƒÂ¢Ã¢â€šÂ¬Ã¢â€žÂ¢ÃƒÆ’Ã†â€™ÃƒÂ¢Ã¢â€šÂ¬Ã‚Â ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬ÃƒÂ¢Ã¢â‚¬Å¾Ã‚Â¢ÃƒÆ’Ã†â€™Ãƒâ€ Ã¢â‚¬â„¢ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬Ãƒâ€šÃ‚Â ÃƒÆ’Ã†â€™Ãƒâ€šÃ‚Â¢ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã…Â¡Ãƒâ€šÃ‚Â¬ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã…Â¾Ãƒâ€šÃ‚Â¢ÃƒÆ’Ã†â€™Ãƒâ€ Ã¢â‚¬â„¢ÃƒÆ’Ã¢â‚¬Â ÃƒÂ¢Ã¢â€šÂ¬Ã¢â€žÂ¢ÃƒÆ’Ã†â€™Ãƒâ€šÃ‚Â¢ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã…Â¡Ãƒâ€šÃ‚Â¬ÃƒÆ’Ã¢â‚¬Â¦Ãƒâ€šÃ‚Â¡ÃƒÆ’Ã†â€™Ãƒâ€ Ã¢â‚¬â„¢ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬Ãƒâ€¦Ã‚Â¡ÃƒÆ’Ã†â€™ÃƒÂ¢Ã¢â€šÂ¬Ã…Â¡ÃƒÆ’Ã¢â‚¬Å¡Ãƒâ€šÃ‚Â¢ÃƒÆ’Ã†â€™Ãƒâ€ Ã¢â‚¬â„¢ÃƒÆ’Ã¢â‚¬Â ÃƒÂ¢Ã¢â€šÂ¬Ã¢â€žÂ¢ÃƒÆ’Ã†â€™ÃƒÂ¢Ã¢â€šÂ¬Ã‚Â ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬ÃƒÂ¢Ã¢â‚¬Å¾Ã‚Â¢ÃƒÆ’Ã†â€™Ãƒâ€ Ã¢â‚¬â„¢ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬Ãƒâ€¦Ã‚Â¡ÃƒÆ’Ã†â€™ÃƒÂ¢Ã¢â€šÂ¬Ã…Â¡ÃƒÆ’Ã¢â‚¬Å¡Ãƒâ€šÃ‚Â¢ÃƒÆ’Ã†â€™Ãƒâ€ Ã¢â‚¬â„¢ÃƒÆ’Ã¢â‚¬Â ÃƒÂ¢Ã¢â€šÂ¬Ã¢â€žÂ¢ÃƒÆ’Ã†â€™ÃƒÂ¢Ã¢â€šÂ¬Ã…Â¡ÃƒÆ’Ã¢â‚¬Å¡Ãƒâ€šÃ‚Â¢ÃƒÆ’Ã†â€™Ãƒâ€ Ã¢â‚¬â„¢ÃƒÆ’Ã¢â‚¬Å¡Ãƒâ€šÃ‚Â¢ÃƒÆ’Ã†â€™Ãƒâ€šÃ‚Â¢ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã…Â¡Ãƒâ€šÃ‚Â¬ÃƒÆ’Ã¢â‚¬Â¦Ãƒâ€šÃ‚Â¡ÃƒÆ’Ã†â€™ÃƒÂ¢Ã¢â€šÂ¬Ã…Â¡ÃƒÆ’Ã¢â‚¬Å¡Ãƒâ€šÃ‚Â¬ÃƒÆ’Ã†â€™Ãƒâ€ Ã¢â‚¬â„¢ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬Ãƒâ€šÃ‚Â¦ÃƒÆ’Ã†â€™ÃƒÂ¢Ã¢â€šÂ¬Ã…Â¡ÃƒÆ’Ã¢â‚¬Å¡Ãƒâ€šÃ‚Â¡ÃƒÆ’Ã†â€™Ãƒâ€ Ã¢â‚¬â„¢ÃƒÆ’Ã¢â‚¬Â ÃƒÂ¢Ã¢â€šÂ¬Ã¢â€žÂ¢ÃƒÆ’Ã†â€™Ãƒâ€šÃ‚Â¢ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã…Â¡Ãƒâ€šÃ‚Â¬ÃƒÆ’Ã¢â‚¬Â¦Ãƒâ€šÃ‚Â¡ÃƒÆ’Ã†â€™Ãƒâ€ Ã¢â‚¬â„¢ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬Ãƒâ€¦Ã‚Â¡ÃƒÆ’Ã†â€™ÃƒÂ¢Ã¢â€šÂ¬Ã…Â¡ÃƒÆ’Ã¢â‚¬Å¡Ãƒâ€šÃ‚Â¬ÃƒÆ’Ã†â€™Ãƒâ€ Ã¢â‚¬â„¢ÃƒÆ’Ã¢â‚¬Â ÃƒÂ¢Ã¢â€šÂ¬Ã¢â€žÂ¢ÃƒÆ’Ã†â€™ÃƒÂ¢Ã¢â€šÂ¬Ã‚Â ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬ÃƒÂ¢Ã¢â‚¬Å¾Ã‚Â¢ÃƒÆ’Ã†â€™Ãƒâ€ Ã¢â‚¬â„¢ÃƒÆ’Ã¢â‚¬Å¡Ãƒâ€šÃ‚Â¢ÃƒÆ’Ã†â€™Ãƒâ€šÃ‚Â¢ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬Ãƒâ€¦Ã‚Â¡ÃƒÆ’Ã¢â‚¬Å¡Ãƒâ€šÃ‚Â¬ÃƒÆ’Ã†â€™ÃƒÂ¢Ã¢â€šÂ¬Ã…Â¡ÃƒÆ’Ã¢â‚¬Å¡Ãƒâ€šÃ‚Â¦ÃƒÆ’Ã†â€™Ãƒâ€ Ã¢â‚¬â„¢ÃƒÆ’Ã¢â‚¬Â ÃƒÂ¢Ã¢â€šÂ¬Ã¢â€žÂ¢ÃƒÆ’Ã†â€™Ãƒâ€šÃ‚Â¢ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã…Â¡Ãƒâ€šÃ‚Â¬ÃƒÆ’Ã¢â‚¬Â¦Ãƒâ€šÃ‚Â¡ÃƒÆ’Ã†â€™Ãƒâ€ Ã¢â‚¬â„¢ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬Ãƒâ€¦Ã‚Â¡ÃƒÆ’Ã†â€™ÃƒÂ¢Ã¢â€šÂ¬Ã…Â¡ÃƒÆ’Ã¢â‚¬Å¡Ãƒâ€šÃ‚Â¡ÃƒÆ’Ã†â€™Ãƒâ€ Ã¢â‚¬â„¢ÃƒÆ’Ã¢â‚¬Â ÃƒÂ¢Ã¢â€šÂ¬Ã¢â€žÂ¢ÃƒÆ’Ã†â€™ÃƒÂ¢Ã¢â€šÂ¬Ã‚Â ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬ÃƒÂ¢Ã¢â‚¬Å¾Ã‚Â¢ÃƒÆ’Ã†â€™Ãƒâ€ Ã¢â‚¬â„¢ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬Ãƒâ€šÃ‚Â ÃƒÆ’Ã†â€™Ãƒâ€šÃ‚Â¢ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã…Â¡Ãƒâ€šÃ‚Â¬ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã…Â¾Ãƒâ€šÃ‚Â¢ÃƒÆ’Ã†â€™Ãƒâ€ Ã¢â‚¬â„¢ÃƒÆ’Ã¢â‚¬Â ÃƒÂ¢Ã¢â€šÂ¬Ã¢â€žÂ¢ÃƒÆ’Ã†â€™Ãƒâ€šÃ‚Â¢ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã…Â¡Ãƒâ€šÃ‚Â¬ÃƒÆ’Ã¢â‚¬Å¡Ãƒâ€šÃ‚Â ÃƒÆ’Ã†â€™Ãƒâ€ Ã¢â‚¬â„¢ÃƒÆ’Ã¢â‚¬Å¡Ãƒâ€šÃ‚Â¢ÃƒÆ’Ã†â€™Ãƒâ€šÃ‚Â¢ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬Ãƒâ€¦Ã‚Â¡ÃƒÆ’Ã¢â‚¬Å¡Ãƒâ€šÃ‚Â¬ÃƒÆ’Ã†â€™Ãƒâ€šÃ‚Â¢ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬Ãƒâ€¦Ã‚Â¾ÃƒÆ’Ã¢â‚¬Å¡Ãƒâ€šÃ‚Â¢ÃƒÆ’Ã†â€™Ãƒâ€ Ã¢â‚¬â„¢ÃƒÆ’Ã¢â‚¬Â ÃƒÂ¢Ã¢â€šÂ¬Ã¢â€žÂ¢ÃƒÆ’Ã†â€™ÃƒÂ¢Ã¢â€šÂ¬Ã‚Â ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬ÃƒÂ¢Ã¢â‚¬Å¾Ã‚Â¢ÃƒÆ’Ã†â€™Ãƒâ€ Ã¢â‚¬â„¢ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬Ãƒâ€¦Ã‚Â¡ÃƒÆ’Ã†â€™ÃƒÂ¢Ã¢â€šÂ¬Ã…Â¡ÃƒÆ’Ã¢â‚¬Å¡Ãƒâ€šÃ‚Â¢ÃƒÆ’Ã†â€™Ãƒâ€ Ã¢â‚¬â„¢ÃƒÆ’Ã¢â‚¬Â ÃƒÂ¢Ã¢â€šÂ¬Ã¢â€žÂ¢ÃƒÆ’Ã†â€™ÃƒÂ¢Ã¢â€šÂ¬Ã…Â¡ÃƒÆ’Ã¢â‚¬Å¡Ãƒâ€šÃ‚Â¢ÃƒÆ’Ã†â€™Ãƒâ€ Ã¢â‚¬â„¢ÃƒÆ’Ã¢â‚¬Å¡Ãƒâ€šÃ‚Â¢ÃƒÆ’Ã†â€™Ãƒâ€šÃ‚Â¢ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬Ãƒâ€¦Ã‚Â¡ÃƒÆ’Ã¢â‚¬Å¡Ãƒâ€šÃ‚Â¬ÃƒÆ’Ã†â€™ÃƒÂ¢Ã¢â€šÂ¬Ã‚Â¦ÃƒÆ’Ã¢â‚¬Å¡Ãƒâ€šÃ‚Â¡ÃƒÆ’Ã†â€™Ãƒâ€ Ã¢â‚¬â„¢ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬Ãƒâ€¦Ã‚Â¡ÃƒÆ’Ã†â€™ÃƒÂ¢Ã¢â€šÂ¬Ã…Â¡ÃƒÆ’Ã¢â‚¬Å¡Ãƒâ€šÃ‚Â¬ÃƒÆ’Ã†â€™Ãƒâ€ Ã¢â‚¬â„¢ÃƒÆ’Ã¢â‚¬Â ÃƒÂ¢Ã¢â€šÂ¬Ã¢â€žÂ¢ÃƒÆ’Ã†â€™Ãƒâ€šÃ‚Â¢ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã…Â¡Ãƒâ€šÃ‚Â¬ÃƒÆ’Ã¢â‚¬Å¡Ãƒâ€šÃ‚Â¦ÃƒÆ’Ã†â€™Ãƒâ€ Ã¢â‚¬â„¢ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬Ãƒâ€¦Ã‚Â¡ÃƒÆ’Ã†â€™ÃƒÂ¢Ã¢â€šÂ¬Ã…Â¡ÃƒÆ’Ã¢â‚¬Å¡Ãƒâ€šÃ‚Â¡ÃƒÆ’Ã†â€™Ãƒâ€ Ã¢â‚¬â„¢ÃƒÆ’Ã¢â‚¬Â ÃƒÂ¢Ã¢â€šÂ¬Ã¢â€žÂ¢ÃƒÆ’Ã†â€™ÃƒÂ¢Ã¢â€šÂ¬Ã‚Â ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬ÃƒÂ¢Ã¢â‚¬Å¾Ã‚Â¢ÃƒÆ’Ã†â€™Ãƒâ€ Ã¢â‚¬â„¢ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬Ãƒâ€šÃ‚Â ÃƒÆ’Ã†â€™Ãƒâ€šÃ‚Â¢ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã…Â¡Ãƒâ€šÃ‚Â¬ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã…Â¾Ãƒâ€šÃ‚Â¢ÃƒÆ’Ã†â€™Ãƒâ€ Ã¢â‚¬â„¢ÃƒÆ’Ã¢â‚¬Â ÃƒÂ¢Ã¢â€šÂ¬Ã¢â€žÂ¢ÃƒÆ’Ã†â€™ÃƒÂ¢Ã¢â€šÂ¬Ã…Â¡ÃƒÆ’Ã¢â‚¬Å¡Ãƒâ€šÃ‚Â¢ÃƒÆ’Ã†â€™Ãƒâ€ Ã¢â‚¬â„¢ÃƒÆ’Ã¢â‚¬Å¡Ãƒâ€šÃ‚Â¢ÃƒÆ’Ã†â€™Ãƒâ€šÃ‚Â¢ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã…Â¡Ãƒâ€šÃ‚Â¬ÃƒÆ’Ã¢â‚¬Â¦Ãƒâ€šÃ‚Â¡ÃƒÆ’Ã†â€™ÃƒÂ¢Ã¢â€šÂ¬Ã…Â¡ÃƒÆ’Ã¢â‚¬Å¡Ãƒâ€šÃ‚Â¬ÃƒÆ’Ã†â€™Ãƒâ€ Ã¢â‚¬â„¢ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬Ãƒâ€šÃ‚Â¦ÃƒÆ’Ã†â€™ÃƒÂ¢Ã¢â€šÂ¬Ã…Â¡ÃƒÆ’Ã¢â‚¬Å¡Ãƒâ€šÃ‚Â¡ÃƒÆ’Ã†â€™Ãƒâ€ Ã¢â‚¬â„¢ÃƒÆ’Ã¢â‚¬Â ÃƒÂ¢Ã¢â€šÂ¬Ã¢â€žÂ¢ÃƒÆ’Ã†â€™ÃƒÂ¢Ã¢â€šÂ¬Ã‚Â ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬ÃƒÂ¢Ã¢â‚¬Å¾Ã‚Â¢ÃƒÆ’Ã†â€™Ãƒâ€ Ã¢â‚¬â„¢ÃƒÆ’Ã¢â‚¬Å¡Ãƒâ€šÃ‚Â¢ÃƒÆ’Ã†â€™Ãƒâ€šÃ‚Â¢ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬Ãƒâ€¦Ã‚Â¡ÃƒÆ’Ã¢â‚¬Å¡Ãƒâ€šÃ‚Â¬ÃƒÆ’Ã†â€™ÃƒÂ¢Ã¢â€šÂ¬Ã‚Â¦ÃƒÆ’Ã¢â‚¬Å¡Ãƒâ€šÃ‚Â¡ÃƒÆ’Ã†â€™Ãƒâ€ Ã¢â‚¬â„¢ÃƒÆ’Ã¢â‚¬Â ÃƒÂ¢Ã¢â€šÂ¬Ã¢â€žÂ¢ÃƒÆ’Ã†â€™Ãƒâ€šÃ‚Â¢ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã…Â¡Ãƒâ€šÃ‚Â¬ÃƒÆ’Ã¢â‚¬Â¦Ãƒâ€šÃ‚Â¡ÃƒÆ’Ã†â€™Ãƒâ€ Ã¢â‚¬â„¢ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬Ãƒâ€¦Ã‚Â¡ÃƒÆ’Ã†â€™ÃƒÂ¢Ã¢â€šÂ¬Ã…Â¡ÃƒÆ’Ã¢â‚¬Å¡Ãƒâ€šÃ‚Â© 2012, Thomas OberndÃƒÆ’Ã†â€™Ãƒâ€ Ã¢â‚¬â„¢ÃƒÆ’Ã¢â‚¬Â ÃƒÂ¢Ã¢â€šÂ¬Ã¢â€žÂ¢ÃƒÆ’Ã†â€™ÃƒÂ¢Ã¢â€šÂ¬Ã‚Â ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬ÃƒÂ¢Ã¢â‚¬Å¾Ã‚Â¢ÃƒÆ’Ã†â€™Ãƒâ€ Ã¢â‚¬â„¢ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬Ãƒâ€šÃ‚Â ÃƒÆ’Ã†â€™Ãƒâ€šÃ‚Â¢ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã…Â¡Ãƒâ€šÃ‚Â¬ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã…Â¾Ãƒâ€šÃ‚Â¢ÃƒÆ’Ã†â€™Ãƒâ€ Ã¢â‚¬â„¢ÃƒÆ’Ã¢â‚¬Â ÃƒÂ¢Ã¢â€šÂ¬Ã¢â€žÂ¢ÃƒÆ’Ã†â€™Ãƒâ€šÃ‚Â¢ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã…Â¡Ãƒâ€šÃ‚Â¬ÃƒÆ’Ã¢â‚¬Å¡Ãƒâ€šÃ‚Â ÃƒÆ’Ã†â€™Ãƒâ€ Ã¢â‚¬â„¢ÃƒÆ’Ã¢â‚¬Å¡Ãƒâ€šÃ‚Â¢ÃƒÆ’Ã†â€™Ãƒâ€šÃ‚Â¢ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬Ãƒâ€¦Ã‚Â¡ÃƒÆ’Ã¢â‚¬Å¡Ãƒâ€šÃ‚Â¬ÃƒÆ’Ã†â€™Ãƒâ€šÃ‚Â¢ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬Ãƒâ€¦Ã‚Â¾ÃƒÆ’Ã¢â‚¬Å¡Ãƒâ€šÃ‚Â¢ÃƒÆ’Ã†â€™Ãƒâ€ Ã¢â‚¬â„¢ÃƒÆ’Ã¢â‚¬Â ÃƒÂ¢Ã¢â€šÂ¬Ã¢â€žÂ¢ÃƒÆ’Ã†â€™ÃƒÂ¢Ã¢â€šÂ¬Ã‚Â ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬ÃƒÂ¢Ã¢â‚¬Å¾Ã‚Â¢ÃƒÆ’Ã†â€™Ãƒâ€ Ã¢â‚¬â„¢ÃƒÆ’Ã¢â‚¬Å¡Ãƒâ€šÃ‚Â¢ÃƒÆ’Ã†â€™Ãƒâ€šÃ‚Â¢ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬Ãƒâ€¦Ã‚Â¡ÃƒÆ’Ã¢â‚¬Å¡Ãƒâ€šÃ‚Â¬ÃƒÆ’Ã†â€™ÃƒÂ¢Ã¢â€šÂ¬Ã…Â¡ÃƒÆ’Ã¢â‚¬Å¡Ãƒâ€šÃ‚Â ÃƒÆ’Ã†â€™Ãƒâ€ Ã¢â‚¬â„¢ÃƒÆ’Ã¢â‚¬Â ÃƒÂ¢Ã¢â€šÂ¬Ã¢â€žÂ¢ÃƒÆ’Ã†â€™ÃƒÂ¢Ã¢â€šÂ¬Ã…Â¡ÃƒÆ’Ã¢â‚¬Å¡Ãƒâ€šÃ‚Â¢ÃƒÆ’Ã†â€™Ãƒâ€ Ã¢â‚¬â„¢ÃƒÆ’Ã¢â‚¬Å¡Ãƒâ€šÃ‚Â¢ÃƒÆ’Ã†â€™Ãƒâ€šÃ‚Â¢ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã…Â¡Ãƒâ€šÃ‚Â¬ÃƒÆ’Ã¢â‚¬Â¦Ãƒâ€šÃ‚Â¡ÃƒÆ’Ã†â€™ÃƒÂ¢Ã¢â€šÂ¬Ã…Â¡ÃƒÆ’Ã¢â‚¬Å¡Ãƒâ€šÃ‚Â¬ÃƒÆ’Ã†â€™Ãƒâ€ Ã¢â‚¬â„¢ÃƒÆ’Ã¢â‚¬Å¡Ãƒâ€šÃ‚Â¢ÃƒÆ’Ã†â€™Ãƒâ€šÃ‚Â¢ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã…Â¡Ãƒâ€šÃ‚Â¬ÃƒÆ’Ã¢â‚¬Â¦Ãƒâ€šÃ‚Â¾ÃƒÆ’Ã†â€™ÃƒÂ¢Ã¢â€šÂ¬Ã…Â¡ÃƒÆ’Ã¢â‚¬Å¡Ãƒâ€šÃ‚Â¢ÃƒÆ’Ã†â€™Ãƒâ€ Ã¢â‚¬â„¢ÃƒÆ’Ã¢â‚¬Â ÃƒÂ¢Ã¢â€šÂ¬Ã¢â€žÂ¢ÃƒÆ’Ã†â€™ÃƒÂ¢Ã¢â€šÂ¬Ã‚Â ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬ÃƒÂ¢Ã¢â‚¬Å¾Ã‚Â¢ÃƒÆ’Ã†â€™Ãƒâ€ Ã¢â‚¬â„¢ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬Ãƒâ€šÃ‚Â ÃƒÆ’Ã†â€™Ãƒâ€šÃ‚Â¢ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã…Â¡Ãƒâ€šÃ‚Â¬ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã…Â¾Ãƒâ€šÃ‚Â¢ÃƒÆ’Ã†â€™Ãƒâ€ Ã¢â‚¬â„¢ÃƒÆ’Ã¢â‚¬Â ÃƒÂ¢Ã¢â€šÂ¬Ã¢â€žÂ¢ÃƒÆ’Ã†â€™ÃƒÂ¢Ã¢â€šÂ¬Ã…Â¡ÃƒÆ’Ã¢â‚¬Å¡Ãƒâ€šÃ‚Â¢ÃƒÆ’Ã†â€™Ãƒâ€ Ã¢â‚¬â„¢ÃƒÆ’Ã¢â‚¬Å¡Ãƒâ€šÃ‚Â¢ÃƒÆ’Ã†â€™Ãƒâ€šÃ‚Â¢ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã…Â¡Ãƒâ€šÃ‚Â¬ÃƒÆ’Ã¢â‚¬Â¦Ãƒâ€šÃ‚Â¡ÃƒÆ’Ã†â€™ÃƒÂ¢Ã¢â€šÂ¬Ã…Â¡ÃƒÆ’Ã¢â‚¬Å¡Ãƒâ€šÃ‚Â¬ÃƒÆ’Ã†â€™Ãƒâ€ Ã¢â‚¬â„¢ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬Ãƒâ€¦Ã‚Â¡ÃƒÆ’Ã†â€™ÃƒÂ¢Ã¢â€šÂ¬Ã…Â¡ÃƒÆ’Ã¢â‚¬Å¡Ãƒâ€šÃ‚Â ÃƒÆ’Ã†â€™Ãƒâ€ Ã¢â‚¬â„¢ÃƒÆ’Ã¢â‚¬Â ÃƒÂ¢Ã¢â€šÂ¬Ã¢â€žÂ¢ÃƒÆ’Ã†â€™ÃƒÂ¢Ã¢â€šÂ¬Ã‚Â ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬ÃƒÂ¢Ã¢â‚¬Å¾Ã‚Â¢ÃƒÆ’Ã†â€™Ãƒâ€ Ã¢â‚¬â„¢ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬Ãƒâ€¦Ã‚Â¡ÃƒÆ’Ã†â€™ÃƒÂ¢Ã¢â€šÂ¬Ã…Â¡ÃƒÆ’Ã¢â‚¬Å¡Ãƒâ€šÃ‚Â¢ÃƒÆ’Ã†â€™Ãƒâ€ Ã¢â‚¬â„¢ÃƒÆ’Ã¢â‚¬Â ÃƒÂ¢Ã¢â€šÂ¬Ã¢â€žÂ¢ÃƒÆ’Ã†â€™ÃƒÂ¢Ã¢â€šÂ¬Ã…Â¡ÃƒÆ’Ã¢â‚¬Å¡Ãƒâ€šÃ‚Â¢ÃƒÆ’Ã†â€™Ãƒâ€ Ã¢â‚¬â„¢ÃƒÆ’Ã¢â‚¬Å¡Ãƒâ€šÃ‚Â¢ÃƒÆ’Ã†â€™Ãƒâ€šÃ‚Â¢ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬Ãƒâ€¦Ã‚Â¡ÃƒÆ’Ã¢â‚¬Å¡Ãƒâ€šÃ‚Â¬ÃƒÆ’Ã†â€™ÃƒÂ¢Ã¢â€šÂ¬Ã‚Â¦ÃƒÆ’Ã¢â‚¬Å¡Ãƒâ€šÃ‚Â¡ÃƒÆ’Ã†â€™Ãƒâ€ Ã¢â‚¬â„¢ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬Ãƒâ€¦Ã‚Â¡ÃƒÆ’Ã†â€™ÃƒÂ¢Ã¢â€šÂ¬Ã…Â¡ÃƒÆ’Ã¢â‚¬Å¡Ãƒâ€šÃ‚Â¬ÃƒÆ’Ã†â€™Ãƒâ€ Ã¢â‚¬â„¢ÃƒÆ’Ã¢â‚¬Â ÃƒÂ¢Ã¢â€šÂ¬Ã¢â€žÂ¢ÃƒÆ’Ã†â€™ÃƒÂ¢Ã¢â€šÂ¬Ã…Â¡ÃƒÆ’Ã¢â‚¬Å¡Ãƒâ€šÃ‚Â¢ÃƒÆ’Ã†â€™Ãƒâ€ Ã¢â‚¬â„¢ÃƒÆ’Ã¢â‚¬Å¡Ãƒâ€šÃ‚Â¢ÃƒÆ’Ã†â€™Ãƒâ€šÃ‚Â¢ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬Ãƒâ€¦Ã‚Â¡ÃƒÆ’Ã¢â‚¬Å¡Ãƒâ€šÃ‚Â¬ÃƒÆ’Ã†â€™ÃƒÂ¢Ã¢â€šÂ¬Ã‚Â¦ÃƒÆ’Ã¢â‚¬Å¡Ãƒâ€šÃ‚Â¾ÃƒÆ’Ã†â€™Ãƒâ€ Ã¢â‚¬â„¢ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬Ãƒâ€¦Ã‚Â¡ÃƒÆ’Ã†â€™ÃƒÂ¢Ã¢â€šÂ¬Ã…Â¡ÃƒÆ’Ã¢â‚¬Å¡Ãƒâ€šÃ‚Â¢ÃƒÆ’Ã†â€™Ãƒâ€ Ã¢â‚¬â„¢ÃƒÆ’Ã¢â‚¬Â ÃƒÂ¢Ã¢â€šÂ¬Ã¢â€žÂ¢ÃƒÆ’Ã†â€™ÃƒÂ¢Ã¢â€šÂ¬Ã‚Â ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬ÃƒÂ¢Ã¢â‚¬Å¾Ã‚Â¢ÃƒÆ’Ã†â€™Ãƒâ€ Ã¢â‚¬â„¢ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬Ãƒâ€šÃ‚Â ÃƒÆ’Ã†â€™Ãƒâ€šÃ‚Â¢ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã…Â¡Ãƒâ€šÃ‚Â¬ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã…Â¾Ãƒâ€šÃ‚Â¢ÃƒÆ’Ã†â€™Ãƒâ€ Ã¢â‚¬â„¢ÃƒÆ’Ã¢â‚¬Â ÃƒÂ¢Ã¢â€šÂ¬Ã¢â€žÂ¢ÃƒÆ’Ã†â€™Ãƒâ€šÃ‚Â¢ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã…Â¡Ãƒâ€šÃ‚Â¬ÃƒÆ’Ã¢â‚¬Å¡Ãƒâ€šÃ‚Â ÃƒÆ’Ã†â€™Ãƒâ€ Ã¢â‚¬â„¢ÃƒÆ’Ã¢â‚¬Å¡Ãƒâ€šÃ‚Â¢ÃƒÆ’Ã†â€™Ãƒâ€šÃ‚Â¢ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬Ãƒâ€¦Ã‚Â¡ÃƒÆ’Ã¢â‚¬Å¡Ãƒâ€šÃ‚Â¬ÃƒÆ’Ã†â€™Ãƒâ€šÃ‚Â¢ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬Ãƒâ€¦Ã‚Â¾ÃƒÆ’Ã¢â‚¬Å¡Ãƒâ€šÃ‚Â¢ÃƒÆ’Ã†â€™Ãƒâ€ Ã¢â‚¬â„¢ÃƒÆ’Ã¢â‚¬Â ÃƒÂ¢Ã¢â€šÂ¬Ã¢â€žÂ¢ÃƒÆ’Ã†â€™ÃƒÂ¢Ã¢â€šÂ¬Ã‚Â ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬ÃƒÂ¢Ã¢â‚¬Å¾Ã‚Â¢ÃƒÆ’Ã†â€™Ãƒâ€ Ã¢â‚¬â„¢ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬Ãƒâ€¦Ã‚Â¡ÃƒÆ’Ã†â€™ÃƒÂ¢Ã¢â€šÂ¬Ã…Â¡ÃƒÆ’Ã¢â‚¬Å¡Ãƒâ€šÃ‚Â¢ÃƒÆ’Ã†â€™Ãƒâ€ Ã¢â‚¬â„¢ÃƒÆ’Ã¢â‚¬Â ÃƒÂ¢Ã¢â€šÂ¬Ã¢â€žÂ¢ÃƒÆ’Ã†â€™ÃƒÂ¢Ã¢â€šÂ¬Ã…Â¡ÃƒÆ’Ã¢â‚¬Å¡Ãƒâ€šÃ‚Â¢ÃƒÆ’Ã†â€™Ãƒâ€ Ã¢â‚¬â„¢ÃƒÆ’Ã¢â‚¬Å¡Ãƒâ€šÃ‚Â¢ÃƒÆ’Ã†â€™Ãƒâ€šÃ‚Â¢ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬Ãƒâ€¦Ã‚Â¡ÃƒÆ’Ã¢â‚¬Å¡Ãƒâ€šÃ‚Â¬ÃƒÆ’Ã†â€™ÃƒÂ¢Ã¢â€šÂ¬Ã‚Â¦ÃƒÆ’Ã¢â‚¬Å¡Ãƒâ€šÃ‚Â¡ÃƒÆ’Ã†â€™Ãƒâ€ Ã¢â‚¬â„¢ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬Ãƒâ€¦Ã‚Â¡ÃƒÆ’Ã†â€™ÃƒÂ¢Ã¢â€šÂ¬Ã…Â¡ÃƒÆ’Ã¢â‚¬Å¡Ãƒâ€šÃ‚Â¬ÃƒÆ’Ã†â€™Ãƒâ€ Ã¢â‚¬â„¢ÃƒÆ’Ã¢â‚¬Â ÃƒÂ¢Ã¢â€šÂ¬Ã¢â€žÂ¢ÃƒÆ’Ã†â€™Ãƒâ€šÃ‚Â¢ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã…Â¡Ãƒâ€šÃ‚Â¬ÃƒÆ’Ã¢â‚¬Â¦Ãƒâ€šÃ‚Â¡ÃƒÆ’Ã†â€™Ãƒâ€ Ã¢â‚¬â„¢ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬Ãƒâ€¦Ã‚Â¡ÃƒÆ’Ã†â€™ÃƒÂ¢Ã¢â€šÂ¬Ã…Â¡ÃƒÆ’Ã¢â‚¬Å¡Ãƒâ€šÃ‚Â ÃƒÆ’Ã†â€™Ãƒâ€ Ã¢â‚¬â„¢ÃƒÆ’Ã¢â‚¬Â ÃƒÂ¢Ã¢â€šÂ¬Ã¢â€žÂ¢ÃƒÆ’Ã†â€™ÃƒÂ¢Ã¢â€šÂ¬Ã‚Â ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬ÃƒÂ¢Ã¢â‚¬Å¾Ã‚Â¢ÃƒÆ’Ã†â€™Ãƒâ€ Ã¢â‚¬â„¢ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬Ãƒâ€šÃ‚Â ÃƒÆ’Ã†â€™Ãƒâ€šÃ‚Â¢ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã…Â¡Ãƒâ€šÃ‚Â¬ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã…Â¾Ãƒâ€šÃ‚Â¢ÃƒÆ’Ã†â€™Ãƒâ€ Ã¢â‚¬â„¢ÃƒÆ’Ã¢â‚¬Â ÃƒÂ¢Ã¢â€šÂ¬Ã¢â€žÂ¢ÃƒÆ’Ã†â€™Ãƒâ€šÃ‚Â¢ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã…Â¡Ãƒâ€šÃ‚Â¬ÃƒÆ’Ã¢â‚¬Â¦Ãƒâ€šÃ‚Â¡ÃƒÆ’Ã†â€™Ãƒâ€ Ã¢â‚¬â„¢ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬Ãƒâ€¦Ã‚Â¡ÃƒÆ’Ã†â€™ÃƒÂ¢Ã¢â€šÂ¬Ã…Â¡ÃƒÆ’Ã¢â‚¬Å¡Ãƒâ€šÃ‚Â¢ÃƒÆ’Ã†â€™Ãƒâ€ Ã¢â‚¬â„¢ÃƒÆ’Ã¢â‚¬Â ÃƒÂ¢Ã¢â€šÂ¬Ã¢â€žÂ¢ÃƒÆ’Ã†â€™ÃƒÂ¢Ã¢â€šÂ¬Ã‚Â ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬ÃƒÂ¢Ã¢â‚¬Å¾Ã‚Â¢ÃƒÆ’Ã†â€™Ãƒâ€ Ã¢â‚¬â„¢ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬Ãƒâ€¦Ã‚Â¡ÃƒÆ’Ã†â€™ÃƒÂ¢Ã¢â€šÂ¬Ã…Â¡ÃƒÆ’Ã¢â‚¬Å¡Ãƒâ€šÃ‚Â¢ÃƒÆ’Ã†â€™Ãƒâ€ Ã¢â‚¬â„¢ÃƒÆ’Ã¢â‚¬Â ÃƒÂ¢Ã¢â€šÂ¬Ã¢â€žÂ¢ÃƒÆ’Ã†â€™ÃƒÂ¢Ã¢â€šÂ¬Ã…Â¡ÃƒÆ’Ã¢â‚¬Å¡Ãƒâ€šÃ‚Â¢ÃƒÆ’Ã†â€™Ãƒâ€ Ã¢â‚¬â„¢ÃƒÆ’Ã¢â‚¬Å¡Ãƒâ€šÃ‚Â¢ÃƒÆ’Ã†â€™Ãƒâ€šÃ‚Â¢ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã…Â¡Ãƒâ€šÃ‚Â¬ÃƒÆ’Ã¢â‚¬Â¦Ãƒâ€šÃ‚Â¡ÃƒÆ’Ã†â€™ÃƒÂ¢Ã¢â€šÂ¬Ã…Â¡ÃƒÆ’Ã¢â‚¬Å¡Ãƒâ€šÃ‚Â¬ÃƒÆ’Ã†â€™Ãƒâ€ Ã¢â‚¬â„¢ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬Ãƒâ€šÃ‚Â¦ÃƒÆ’Ã†â€™ÃƒÂ¢Ã¢â€šÂ¬Ã…Â¡ÃƒÆ’Ã¢â‚¬Å¡Ãƒâ€šÃ‚Â¡ÃƒÆ’Ã†â€™Ãƒâ€ Ã¢â‚¬â„¢ÃƒÆ’Ã¢â‚¬Â ÃƒÂ¢Ã¢â€šÂ¬Ã¢â€žÂ¢ÃƒÆ’Ã†â€™Ãƒâ€šÃ‚Â¢ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã…Â¡Ãƒâ€šÃ‚Â¬ÃƒÆ’Ã¢â‚¬Â¦Ãƒâ€šÃ‚Â¡ÃƒÆ’Ã†â€™Ãƒâ€ Ã¢â‚¬â„¢ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬Ãƒâ€¦Ã‚Â¡ÃƒÆ’Ã†â€™ÃƒÂ¢Ã¢â€šÂ¬Ã…Â¡ÃƒÆ’Ã¢â‚¬Å¡Ãƒâ€šÃ‚Â¬ÃƒÆ’Ã†â€™Ãƒâ€ Ã¢â‚¬â„¢ÃƒÆ’Ã¢â‚¬Â ÃƒÂ¢Ã¢â€šÂ¬Ã¢â€žÂ¢ÃƒÆ’Ã†â€™ÃƒÂ¢Ã¢â€šÂ¬Ã‚Â ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬ÃƒÂ¢Ã¢â‚¬Å¾Ã‚Â¢ÃƒÆ’Ã†â€™Ãƒâ€ Ã¢â‚¬â„¢ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬Ãƒâ€¦Ã‚Â¡ÃƒÆ’Ã†â€™ÃƒÂ¢Ã¢â€šÂ¬Ã…Â¡ÃƒÆ’Ã¢â‚¬Å¡Ãƒâ€šÃ‚Â¢ÃƒÆ’Ã†â€™Ãƒâ€ Ã¢â‚¬â„¢ÃƒÆ’Ã¢â‚¬Â ÃƒÂ¢Ã¢â€šÂ¬Ã¢â€žÂ¢ÃƒÆ’Ã†â€™ÃƒÂ¢Ã¢â€šÂ¬Ã…Â¡ÃƒÆ’Ã¢â‚¬Å¡Ãƒâ€šÃ‚Â¢ÃƒÆ’Ã†â€™Ãƒâ€ Ã¢â‚¬â„¢ÃƒÆ’Ã¢â‚¬Å¡Ãƒâ€šÃ‚Â¢ÃƒÆ’Ã†â€™Ãƒâ€šÃ‚Â¢ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã…Â¡Ãƒâ€šÃ‚Â¬ÃƒÆ’Ã¢â‚¬Â¦Ãƒâ€šÃ‚Â¡ÃƒÆ’Ã†â€™ÃƒÂ¢Ã¢â€šÂ¬Ã…Â¡ÃƒÆ’Ã¢â‚¬Å¡Ãƒâ€šÃ‚Â¬ÃƒÆ’Ã†â€™Ãƒâ€ Ã¢â‚¬â„¢ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬Ãƒâ€šÃ‚Â¦ÃƒÆ’Ã†â€™ÃƒÂ¢Ã¢â€šÂ¬Ã…Â¡ÃƒÆ’Ã¢â‚¬Å¡Ãƒâ€šÃ‚Â¾ÃƒÆ’Ã†â€™Ãƒâ€ Ã¢â‚¬â„¢ÃƒÆ’Ã¢â‚¬Â ÃƒÂ¢Ã¢â€šÂ¬Ã¢â€žÂ¢ÃƒÆ’Ã†â€™Ãƒâ€šÃ‚Â¢ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã…Â¡Ãƒâ€šÃ‚Â¬ÃƒÆ’Ã¢â‚¬Â¦Ãƒâ€šÃ‚Â¡ÃƒÆ’Ã†â€™Ãƒâ€ Ã¢â‚¬â„¢ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬Ãƒâ€¦Ã‚Â¡ÃƒÆ’Ã†â€™ÃƒÂ¢Ã¢â€šÂ¬Ã…Â¡ÃƒÆ’Ã¢â‚¬Å¡Ãƒâ€šÃ‚Â¢ÃƒÆ’Ã†â€™Ãƒâ€ Ã¢â‚¬â„¢ÃƒÆ’Ã¢â‚¬Â ÃƒÂ¢Ã¢â€šÂ¬Ã¢â€žÂ¢ÃƒÆ’Ã†â€™ÃƒÂ¢Ã¢â€šÂ¬Ã‚Â ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬ÃƒÂ¢Ã¢â‚¬Å¾Ã‚Â¢ÃƒÆ’Ã†â€™Ãƒâ€ Ã¢â‚¬â„¢ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬Ãƒâ€šÃ‚Â ÃƒÆ’Ã†â€™Ãƒâ€šÃ‚Â¢ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã…Â¡Ãƒâ€šÃ‚Â¬ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã…Â¾Ãƒâ€šÃ‚Â¢ÃƒÆ’Ã†â€™Ãƒâ€ Ã¢â‚¬â„¢ÃƒÆ’Ã¢â‚¬Â ÃƒÂ¢Ã¢â€šÂ¬Ã¢â€žÂ¢ÃƒÆ’Ã†â€™Ãƒâ€šÃ‚Â¢ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã…Â¡Ãƒâ€šÃ‚Â¬ÃƒÆ’Ã¢â‚¬Å¡Ãƒâ€šÃ‚Â ÃƒÆ’Ã†â€™Ãƒâ€ Ã¢â‚¬â„¢ÃƒÆ’Ã¢â‚¬Å¡Ãƒâ€šÃ‚Â¢ÃƒÆ’Ã†â€™Ãƒâ€šÃ‚Â¢ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬Ãƒâ€¦Ã‚Â¡ÃƒÆ’Ã¢â‚¬Å¡Ãƒâ€šÃ‚Â¬ÃƒÆ’Ã†â€™Ãƒâ€šÃ‚Â¢ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬Ãƒâ€¦Ã‚Â¾ÃƒÆ’Ã¢â‚¬Å¡Ãƒâ€šÃ‚Â¢ÃƒÆ’Ã†â€™Ãƒâ€ Ã¢â‚¬â„¢ÃƒÆ’Ã¢â‚¬Â ÃƒÂ¢Ã¢â€šÂ¬Ã¢â€žÂ¢ÃƒÆ’Ã†â€™ÃƒÂ¢Ã¢â€šÂ¬Ã‚Â ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬ÃƒÂ¢Ã¢â‚¬Å¾Ã‚Â¢ÃƒÆ’Ã†â€™Ãƒâ€ Ã¢â‚¬â„¢ÃƒÆ’Ã¢â‚¬Å¡Ãƒâ€šÃ‚Â¢ÃƒÆ’Ã†â€™Ãƒâ€šÃ‚Â¢ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬Ãƒâ€¦Ã‚Â¡ÃƒÆ’Ã¢â‚¬Å¡Ãƒâ€šÃ‚Â¬ÃƒÆ’Ã†â€™ÃƒÂ¢Ã¢â€šÂ¬Ã…Â¡ÃƒÆ’Ã¢â‚¬Å¡Ãƒâ€šÃ‚Â ÃƒÆ’Ã†â€™Ãƒâ€ Ã¢â‚¬â„¢ÃƒÆ’Ã¢â‚¬Â ÃƒÂ¢Ã¢â€šÂ¬Ã¢â€žÂ¢ÃƒÆ’Ã†â€™ÃƒÂ¢Ã¢â€šÂ¬Ã…Â¡ÃƒÆ’Ã¢â‚¬Å¡Ãƒâ€šÃ‚Â¢ÃƒÆ’Ã†â€™Ãƒâ€ Ã¢â‚¬â„¢ÃƒÆ’Ã¢â‚¬Å¡Ãƒâ€šÃ‚Â¢ÃƒÆ’Ã†â€™Ãƒâ€šÃ‚Â¢ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã…Â¡Ãƒâ€šÃ‚Â¬ÃƒÆ’Ã¢â‚¬Â¦Ãƒâ€šÃ‚Â¡ÃƒÆ’Ã†â€™ÃƒÂ¢Ã¢â€šÂ¬Ã…Â¡ÃƒÆ’Ã¢â‚¬Å¡Ãƒâ€šÃ‚Â¬ÃƒÆ’Ã†â€™Ãƒâ€ Ã¢â‚¬â„¢ÃƒÆ’Ã¢â‚¬Å¡Ãƒâ€šÃ‚Â¢ÃƒÆ’Ã†â€™Ãƒâ€šÃ‚Â¢ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã…Â¡Ãƒâ€šÃ‚Â¬ÃƒÆ’Ã¢â‚¬Â¦Ãƒâ€šÃ‚Â¾ÃƒÆ’Ã†â€™ÃƒÂ¢Ã¢â€šÂ¬Ã…Â¡ÃƒÆ’Ã¢â‚¬Å¡Ãƒâ€šÃ‚Â¢ÃƒÆ’Ã†â€™Ãƒâ€ Ã¢â‚¬â„¢ÃƒÆ’Ã¢â‚¬Â ÃƒÂ¢Ã¢â€šÂ¬Ã¢â€žÂ¢ÃƒÆ’Ã†â€™ÃƒÂ¢Ã¢â€šÂ¬Ã‚Â ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬ÃƒÂ¢Ã¢â‚¬Å¾Ã‚Â¢ÃƒÆ’Ã†â€™Ãƒâ€ Ã¢â‚¬â„¢ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬Ãƒâ€šÃ‚Â ÃƒÆ’Ã†â€™Ãƒâ€šÃ‚Â¢ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã…Â¡Ãƒâ€šÃ‚Â¬ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã…Â¾Ãƒâ€šÃ‚Â¢ÃƒÆ’Ã†â€™Ãƒâ€ Ã¢â‚¬â„¢ÃƒÆ’Ã¢â‚¬Â ÃƒÂ¢Ã¢â€šÂ¬Ã¢â€žÂ¢ÃƒÆ’Ã†â€™Ãƒâ€šÃ‚Â¢ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã…Â¡Ãƒâ€šÃ‚Â¬ÃƒÆ’Ã¢â‚¬Â¦Ãƒâ€šÃ‚Â¡ÃƒÆ’Ã†â€™Ãƒâ€ Ã¢â‚¬â„¢ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬Ãƒâ€¦Ã‚Â¡ÃƒÆ’Ã†â€™ÃƒÂ¢Ã¢â€šÂ¬Ã…Â¡ÃƒÆ’Ã¢â‚¬Å¡Ãƒâ€šÃ‚Â¢ÃƒÆ’Ã†â€™Ãƒâ€ Ã¢â‚¬â„¢ÃƒÆ’Ã¢â‚¬Â ÃƒÂ¢Ã¢â€šÂ¬Ã¢â€žÂ¢ÃƒÆ’Ã†â€™ÃƒÂ¢Ã¢â€šÂ¬Ã‚Â ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬ÃƒÂ¢Ã¢â‚¬Å¾Ã‚Â¢ÃƒÆ’Ã†â€™Ãƒâ€ Ã¢â‚¬â„¢ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬Ãƒâ€¦Ã‚Â¡ÃƒÆ’Ã†â€™ÃƒÂ¢Ã¢â€šÂ¬Ã…Â¡ÃƒÆ’Ã¢â‚¬Å¡Ãƒâ€šÃ‚Â¢ÃƒÆ’Ã†â€™Ãƒâ€ Ã¢â‚¬â„¢ÃƒÆ’Ã¢â‚¬Â ÃƒÂ¢Ã¢â€šÂ¬Ã¢â€žÂ¢ÃƒÆ’Ã†â€™ÃƒÂ¢Ã¢â€šÂ¬Ã…Â¡ÃƒÆ’Ã¢â‚¬Å¡Ãƒâ€šÃ‚Â¢ÃƒÆ’Ã†â€™Ãƒâ€ Ã¢â‚¬â„¢ÃƒÆ’Ã¢â‚¬Å¡Ãƒâ€šÃ‚Â¢ÃƒÆ’Ã†â€™Ãƒâ€šÃ‚Â¢ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã…Â¡Ãƒâ€šÃ‚Â¬ÃƒÆ’Ã¢â‚¬Â¦Ãƒâ€šÃ‚Â¡ÃƒÆ’Ã†â€™ÃƒÂ¢Ã¢â€šÂ¬Ã…Â¡ÃƒÆ’Ã¢â‚¬Å¡Ãƒâ€šÃ‚Â¬ÃƒÆ’Ã†â€™Ãƒâ€ Ã¢â‚¬â„¢ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬Ãƒâ€šÃ‚Â¦ÃƒÆ’Ã†â€™ÃƒÂ¢Ã¢â€šÂ¬Ã…Â¡ÃƒÆ’Ã¢â‚¬Å¡Ãƒâ€šÃ‚Â¡ÃƒÆ’Ã†â€™Ãƒâ€ Ã¢â‚¬â„¢ÃƒÆ’Ã¢â‚¬Â ÃƒÂ¢Ã¢â€šÂ¬Ã¢â€žÂ¢ÃƒÆ’Ã†â€™Ãƒâ€šÃ‚Â¢ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã…Â¡Ãƒâ€šÃ‚Â¬ÃƒÆ’Ã¢â‚¬Â¦Ãƒâ€šÃ‚Â¡ÃƒÆ’Ã†â€™Ãƒâ€ Ã¢â‚¬â„¢ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬Ãƒâ€¦Ã‚Â¡ÃƒÆ’Ã†â€™ÃƒÂ¢Ã¢â€šÂ¬Ã…Â¡ÃƒÆ’Ã¢â‚¬Å¡Ãƒâ€šÃ‚Â¬ÃƒÆ’Ã†â€™Ãƒâ€ Ã¢â‚¬â„¢ÃƒÆ’Ã¢â‚¬Â ÃƒÂ¢Ã¢â€šÂ¬Ã¢â€žÂ¢ÃƒÆ’Ã†â€™ÃƒÂ¢Ã¢â€šÂ¬Ã‚Â ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬ÃƒÂ¢Ã¢â‚¬Å¾Ã‚Â¢ÃƒÆ’Ã†â€™Ãƒâ€ Ã¢â‚¬â„¢ÃƒÆ’Ã¢â‚¬Å¡Ãƒâ€šÃ‚Â¢ÃƒÆ’Ã†â€™Ãƒâ€šÃ‚Â¢ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬Ãƒâ€¦Ã‚Â¡ÃƒÆ’Ã¢â‚¬Å¡Ãƒâ€šÃ‚Â¬ÃƒÆ’Ã†â€™ÃƒÂ¢Ã¢â€šÂ¬Ã…Â¡ÃƒÆ’Ã¢â‚¬Å¡Ãƒâ€šÃ‚Â¦ÃƒÆ’Ã†â€™Ãƒâ€ Ã¢â‚¬â„¢ÃƒÆ’Ã¢â‚¬Â ÃƒÂ¢Ã¢â€šÂ¬Ã¢â€žÂ¢ÃƒÆ’Ã†â€™Ãƒâ€šÃ‚Â¢ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã…Â¡Ãƒâ€šÃ‚Â¬ÃƒÆ’Ã¢â‚¬Â¦Ãƒâ€šÃ‚Â¡ÃƒÆ’Ã†â€™Ãƒâ€ Ã¢â‚¬â„¢ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬Ãƒâ€¦Ã‚Â¡ÃƒÆ’Ã†â€™ÃƒÂ¢Ã¢â€šÂ¬Ã…Â¡ÃƒÆ’Ã¢â‚¬Å¡Ãƒâ€šÃ‚Â¡ÃƒÆ’Ã†â€™Ãƒâ€ Ã¢â‚¬â„¢ÃƒÆ’Ã¢â‚¬Â ÃƒÂ¢Ã¢â€šÂ¬Ã¢â€žÂ¢ÃƒÆ’Ã†â€™ÃƒÂ¢Ã¢â€šÂ¬Ã‚Â ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬ÃƒÂ¢Ã¢â‚¬Å¾Ã‚Â¢ÃƒÆ’Ã†â€™Ãƒâ€ Ã¢â‚¬â„¢ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬Ãƒâ€šÃ‚Â ÃƒÆ’Ã†â€™Ãƒâ€šÃ‚Â¢ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã…Â¡Ãƒâ€šÃ‚Â¬ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã…Â¾Ãƒâ€šÃ‚Â¢ÃƒÆ’Ã†â€™Ãƒâ€ Ã¢â‚¬â„¢ÃƒÆ’Ã¢â‚¬Â ÃƒÂ¢Ã¢â€šÂ¬Ã¢â€žÂ¢ÃƒÆ’Ã†â€™Ãƒâ€šÃ‚Â¢ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã…Â¡Ãƒâ€šÃ‚Â¬ÃƒÆ’Ã¢â‚¬Å¡Ãƒâ€šÃ‚Â ÃƒÆ’Ã†â€™Ãƒâ€ Ã¢â‚¬â„¢ÃƒÆ’Ã¢â‚¬Å¡Ãƒâ€šÃ‚Â¢ÃƒÆ’Ã†â€™Ãƒâ€šÃ‚Â¢ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬Ãƒâ€¦Ã‚Â¡ÃƒÆ’Ã¢â‚¬Å¡Ãƒâ€šÃ‚Â¬ÃƒÆ’Ã†â€™Ãƒâ€šÃ‚Â¢ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬Ãƒâ€¦Ã‚Â¾ÃƒÆ’Ã¢â‚¬Å¡Ãƒâ€šÃ‚Â¢ÃƒÆ’Ã†â€™Ãƒâ€ Ã¢â‚¬â„¢ÃƒÆ’Ã¢â‚¬Â ÃƒÂ¢Ã¢â€šÂ¬Ã¢â€žÂ¢ÃƒÆ’Ã†â€™ÃƒÂ¢Ã¢â€šÂ¬Ã‚Â ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬ÃƒÂ¢Ã¢â‚¬Å¾Ã‚Â¢ÃƒÆ’Ã†â€™Ãƒâ€ Ã¢â‚¬â„¢ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬Ãƒâ€¦Ã‚Â¡ÃƒÆ’Ã†â€™ÃƒÂ¢Ã¢â€šÂ¬Ã…Â¡ÃƒÆ’Ã¢â‚¬Å¡Ãƒâ€šÃ‚Â¢ÃƒÆ’Ã†â€™Ãƒâ€ Ã¢â‚¬â„¢ÃƒÆ’Ã¢â‚¬Â ÃƒÂ¢Ã¢â€šÂ¬Ã¢â€žÂ¢ÃƒÆ’Ã†â€™ÃƒÂ¢Ã¢â€šÂ¬Ã…Â¡ÃƒÆ’Ã¢â‚¬Å¡Ãƒâ€šÃ‚Â¢ÃƒÆ’Ã†â€™Ãƒâ€ Ã¢â‚¬â„¢ÃƒÆ’Ã¢â‚¬Å¡Ãƒâ€šÃ‚Â¢ÃƒÆ’Ã†â€™Ãƒâ€šÃ‚Â¢ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬Ãƒâ€¦Ã‚Â¡ÃƒÆ’Ã¢â‚¬Å¡Ãƒâ€šÃ‚Â¬ÃƒÆ’Ã†â€™ÃƒÂ¢Ã¢â€šÂ¬Ã‚Â¦ÃƒÆ’Ã¢â‚¬Å¡Ãƒâ€šÃ‚Â¡ÃƒÆ’Ã†â€™Ãƒâ€ Ã¢â‚¬â„¢ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬Ãƒâ€¦Ã‚Â¡ÃƒÆ’Ã†â€™ÃƒÂ¢Ã¢â€šÂ¬Ã…Â¡ÃƒÆ’Ã¢â‚¬Å¡Ãƒâ€šÃ‚Â¬ÃƒÆ’Ã†â€™Ãƒâ€ Ã¢â‚¬â„¢ÃƒÆ’Ã¢â‚¬Â ÃƒÂ¢Ã¢â€šÂ¬Ã¢â€žÂ¢ÃƒÆ’Ã†â€™Ãƒâ€šÃ‚Â¢ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã…Â¡Ãƒâ€šÃ‚Â¬ÃƒÆ’Ã¢â‚¬Å¡Ãƒâ€šÃ‚Â¦ÃƒÆ’Ã†â€™Ãƒâ€ Ã¢â‚¬â„¢ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬Ãƒâ€¦Ã‚Â¡ÃƒÆ’Ã†â€™ÃƒÂ¢Ã¢â€šÂ¬Ã…Â¡ÃƒÆ’Ã¢â‚¬Å¡Ãƒâ€šÃ‚Â¡ÃƒÆ’Ã†â€™Ãƒâ€ Ã¢â‚¬â„¢ÃƒÆ’Ã¢â‚¬Â ÃƒÂ¢Ã¢â€šÂ¬Ã¢â€žÂ¢ÃƒÆ’Ã†â€™ÃƒÂ¢Ã¢â€šÂ¬Ã‚Â ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬ÃƒÂ¢Ã¢â‚¬Å¾Ã‚Â¢ÃƒÆ’Ã†â€™Ãƒâ€ Ã¢â‚¬â„¢ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬Ãƒâ€šÃ‚Â ÃƒÆ’Ã†â€™Ãƒâ€šÃ‚Â¢ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã…Â¡Ãƒâ€šÃ‚Â¬ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã…Â¾Ãƒâ€šÃ‚Â¢ÃƒÆ’Ã†â€™Ãƒâ€ Ã¢â‚¬â„¢ÃƒÆ’Ã¢â‚¬Â ÃƒÂ¢Ã¢â€šÂ¬Ã¢â€žÂ¢ÃƒÆ’Ã†â€™ÃƒÂ¢Ã¢â€šÂ¬Ã…Â¡ÃƒÆ’Ã¢â‚¬Å¡Ãƒâ€šÃ‚Â¢ÃƒÆ’Ã†â€™Ãƒâ€ Ã¢â‚¬â„¢ÃƒÆ’Ã¢â‚¬Å¡Ãƒâ€šÃ‚Â¢ÃƒÆ’Ã†â€™Ãƒâ€šÃ‚Â¢ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã…Â¡Ãƒâ€šÃ‚Â¬ÃƒÆ’Ã¢â‚¬Â¦Ãƒâ€šÃ‚Â¡ÃƒÆ’Ã†â€™ÃƒÂ¢Ã¢â€šÂ¬Ã…Â¡ÃƒÆ’Ã¢â‚¬Å¡Ãƒâ€šÃ‚Â¬ÃƒÆ’Ã†â€™Ãƒâ€ Ã¢â‚¬â„¢ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬Ãƒâ€šÃ‚Â¦ÃƒÆ’Ã†â€™ÃƒÂ¢Ã¢â€šÂ¬Ã…Â¡ÃƒÆ’Ã¢â‚¬Å¡Ãƒâ€šÃ‚Â¡ÃƒÆ’Ã†â€™Ãƒâ€ Ã¢â‚¬â„¢ÃƒÆ’Ã¢â‚¬Â ÃƒÂ¢Ã¢â€šÂ¬Ã¢â€žÂ¢ÃƒÆ’Ã†â€™ÃƒÂ¢Ã¢â€šÂ¬Ã‚Â ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬ÃƒÂ¢Ã¢â‚¬Å¾Ã‚Â¢ÃƒÆ’Ã†â€™Ãƒâ€ Ã¢â‚¬â„¢ÃƒÆ’Ã¢â‚¬Å¡Ãƒâ€šÃ‚Â¢ÃƒÆ’Ã†â€™Ãƒâ€šÃ‚Â¢ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬Ãƒâ€¦Ã‚Â¡ÃƒÆ’Ã¢â‚¬Å¡Ãƒâ€šÃ‚Â¬ÃƒÆ’Ã†â€™ÃƒÂ¢Ã¢â€šÂ¬Ã‚Â¦ÃƒÆ’Ã¢â‚¬Å¡Ãƒâ€šÃ‚Â¡ÃƒÆ’Ã†â€™Ãƒâ€ Ã¢â‚¬â„¢ÃƒÆ’Ã¢â‚¬Â ÃƒÂ¢Ã¢â€šÂ¬Ã¢â€žÂ¢ÃƒÆ’Ã†â€™Ãƒâ€šÃ‚Â¢ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã…Â¡Ãƒâ€šÃ‚Â¬ÃƒÆ’Ã¢â‚¬Â¦Ãƒâ€šÃ‚Â¡ÃƒÆ’Ã†â€™Ãƒâ€ Ã¢â‚¬â„¢ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬Ãƒâ€¦Ã‚Â¡ÃƒÆ’Ã†â€™ÃƒÂ¢Ã¢â€šÂ¬Ã…Â¡ÃƒÆ’Ã¢â‚¬Å¡Ãƒâ€šÃ‚Â¶rfer <toberndo@yarkon.de>
-	//    * MIT Licensed
-		
-	// 	"use strict";  
-	// 	  var root = null;
-		  
-	// 	  var intervals = [];
-		  
-	// 	  var Interval = function(from, to, inter) {
-	// 	    this.id = ++Interval.prototype.id;
-	// 	    this.from = from;
-	// 	    this.to = to;
-	// 	    this.overlap = {};
-	// 	    if(typeof inter !== 'undefined'){   //////djv edit;
-	// 		   this.inter = inter;
-	// 	    }
-	// 	  }
-		  
-	// 	  Interval.prototype.id = 0;
-	// 	  Interval.const = Interval.prototype;
-	// 	  Interval.prototype.SUBSET = 1;
-	// 	  Interval.prototype.DISJOINT = 2;
-	// 	  Interval.prototype.INTERSECT_OR_SUPERSET = 3;
-		  
-	// 	  Interval.prototype.compareTo = function(other) {
-	// 	    if (other.from > this.to || other.to < this.from) return this.DISJOINT;
-	// 	    if (other.from <= this.from && other.to >= this.to) return this.SUBSET; 
-	// 	    return this.INTERSECT_OR_SUPERSET;
-	// 	  }
-		  
-	// 	  // endpoints of intervals included
-	// 	  Interval.prototype.disjointIncl = function(other) {
-	// 	    if (other.from > this.to || other.to < this.from) return this.DISJOINT;
-	// 	  }
-		  
-	// 	  // two intervals that share only endpoints are seen as disjoint
-	// 	  Interval.prototype.disjointExcl = function(other) {
-	// 	    if (other.from >= this.to || other.to <= this.from) return this.DISJOINT;
-	// 	  }
-		  
-	// 	  var Node = function(from, to) {
-	// 	    this.left = null;
-	// 	    this.right = null;
-	// 	    this.segment = new Interval(from, to);
-	// 	    this.intervals = [];
-	// 	  }
-		  
-	// 	  var endpointArray = function() {
-	// 	    var endpoints = [];
-	// 	    endpoints.push(-Infinity);
-	// 	    endpoints.push(Infinity);
-	// 	    intervals.forEach(function(item) {
-	// 	      endpoints.push(item.from);
-	// 	      endpoints.push(item.to);
-	// 	    });
-	// 	    return sortAndDeDup(endpoints, function(a, b) {
-	// 	      return (a - b);
-	// 	    });
-	// 	  }
-		  
-	// 	  var sortAndDeDup = function(unordered, compFn) {
-	// 	    var result = [];
-	// 	    var prev;
-	// 	    unordered.sort(compFn).forEach(function(item) {
-	// 	      var equal = (compFn !== undefined && prev !== undefined) ? compFn(prev, item) === 0 : prev === item; 
-	// 	      if (!equal) {
-	// 	        result.push(item);
-	// 	        prev = item;
-	// 	      }
-	// 	    });
-	// 	    return result;
-	// 	  }
-		  
-	// 	  var insertElements = function(pointArray) {
-	// 	    var node;
-	// 	    if (pointArray.length === 2) {
-	// 	      node = new Node(pointArray[0], pointArray[1]);
-	// 	      if (pointArray[1] !== Infinity) {
-	// 	        node.left = new Node(pointArray[0], pointArray[1]);
-	// 	        node.right = new Node(pointArray[1], pointArray[1]);
-	// 	      }
-	// 	    } else {
-	// 	      node = new Node(pointArray[0], pointArray[pointArray.length - 1]);
-	// 	      // split array in two halfs
-	// 	      var center = Math.floor(pointArray.length / 2);
-	// 	      node.left = insertElements(pointArray.slice(0, center + 1));
-	// 	      node.right = insertElements(pointArray.slice(center));
-	// 	    }
-	// 	    return node;
-	// 	  }
-		  
-	// 	  var insertInterval = function(node, interval) {
-	// 	    switch(node.segment.compareTo(interval)) {
-	// 	      case Interval.const.SUBSET:
-	// 	        // interval of node is a subset of the specified interval or equal
-	// 	        node.intervals.push(interval);
-	// 	        break;
-	// 	      case Interval.const.INTERSECT_OR_SUPERSET:
-	// 	        // interval of node is a superset, have to look in both childs
-	// 	        if (node.left) insertInterval(node.left, interval);
-	// 	        if (node.right) insertInterval(node.right, interval);
-	// 	        break;
-	// 	      case Interval.const.DISJOINT:
-	// 	        // nothing to do
-	// 	        break;
-	// 	    }
-	// 	  }
-		  
-	// 	  var traverseTree = function(node, enterFn, leaveFn) {
-	// 	    if (node === null) return;
-	// 	    // callback when enter node
-	// 	    if (enterFn !== undefined) enterFn(node);
-	// 	    traverseTree(node.right, enterFn, leaveFn);
-	// 	    traverseTree(node.left, enterFn, leaveFn);
-	// 	    // callback before leave
-	// 	    if (leaveFn !== undefined) leaveFn(node);
-	// 	  }
-		  
-	// 	  var tree2Array = function(node, level, array) {
-	// 	    if (node === null) return;
-	// 	    if (level === undefined) level = -1;
-	// 	    if (array === undefined) array = [];
-	// 	    level++;
-	// 	    if (!array[level]) array[level] = [];
-	// 	    array[level].push(node);
-	// 	    tree2Array(node.right, level, array);
-	// 	    tree2Array(node.left, level, array);
-	// 	    return array;
-	// 	  }
-		  
-	// 	  var _query = function(node, queryIntervals, hits, disjointFn) {
-	// 	    if (node === null) return;
-	// 	    queryIntervals.forEach(function(queryInterval) {
-	// 	      if (disjointFn.call(node.segment, queryInterval) !== Interval.const.DISJOINT) {
-	// 	        node.intervals.forEach(function(interval) {
-	// 	          hits[interval.id] = interval;
-	// 	        });
-	// 	        _query(node.right, queryIntervals, hits, disjointFn);
-	// 	        _query(node.left, queryIntervals, hits, disjointFn);
-	// 	      }
-	// 	    });
-	// 	  }
-		  
-	// 	  var _queryInterval = function(intervalArray, resultFn, disjointFn) {
-	// 	    var hits = {};
-	// 	    if (disjointFn === undefined) disjointFn = Interval.prototype.disjointIncl;
-	// 	    _query(root, intervalArray, hits, disjointFn);
-	// 	    var intervalArray = Object.keys(hits).map(function(key) {
-	// 	      return hits[key];
-	// 	    });
-	// 	    if (resultFn !== undefined && typeof resultFn === 'function') resultFn(intervalArray);
-	// 	    return intervalArray.length;
-	// 	  }
-		  
-	// 	  var _exchangeOverlap = function(intervals, superiorIntervals) {
-	// 	    for(var i = 0; i < superiorIntervals.length; i++) {
-	// 	      var superiorInterval = superiorIntervals[i];
-	// 	      for(var j = 0; j < intervals.length; j++) {
-	// 	        intervals[j].overlap[superiorInterval.id] = superiorInterval;
-	// 	        superiorInterval.overlap[intervals[j].id] = intervals[j]; 
-	// 	      }
-	// 	    }
-	// 	    // intervals of node overlap with each other
-	// 	    for(var i = 0; i < intervals.length; i++) {
-	// 	      for(var j = i + 1; j < intervals.length; j++) {
-	// 	        intervals[i].overlap[intervals[j].id] = intervals[j];
-	// 	        intervals[j].overlap[intervals[i].id] = intervals[i]; 
-	// 	      }
-	// 	    }
-	// 	  }
-		  
-	// 	  var _queryOverlap = function(node, topOverlap) {
-	// 	    if (node === null) return;
-	// 	    var localTopOvrlp;
-	// 	    // exchange overlaps: all intervals of a node overlap with intervals of superior nodes and vice versa
-	// 	    if (node.intervals.length !== 0) {
-	// 	      _exchangeOverlap(node.intervals, topOverlap);
-	// 	      // create topOverlap array with new intervals from node
-	// 	      localTopOvrlp = topOverlap.concat(node.intervals);
-	// 	    } else {
-	// 	      localTopOvrlp = topOverlap;
-	// 	    }
-	// 	    _queryOverlap(node.left, localTopOvrlp); 
-	// 	    _queryOverlap(node.right, localTopOvrlp); 
-	// 	  }
-		  
-	// 	    var validateInterval = function(from, to) {
-	// 	    if (typeof from !== 'number' || typeof to !== 'number') throw {
-	// 	        name: 'InvalidInterval',
-	// 	        message: 'endpoints of interval must be of type number'
-	// 	    };
-	// 	    if (from > to) throw {
-	// 	        name: 'InvalidInterval',
-	// 	        message: '(' + from + ',' + to + ')' + ' a > b'
-	// 	    };
-	// 	  }
-		  
-	// 	  var validateIntervalArray = function(from, to) {
-	// 	    if (!(from instanceof Array && to instanceof Array)) throw {
-	// 	        name: 'InvalidParameter',
-	// 	        message: 'function pushArray: parameters must be arrays'
-	// 	    };
-	// 	    if (from.length !== to.length) throw {
-	// 	        name: 'InvalidParameter',
-	// 	        message: 'function pushArray: arrays must have same length'
-	// 	    };
-	// 	    for(var i = 0; i < from.length; i++) {
-	// 	      validateInterval(from[i], to[i]);
-	// 	    }
-	// 	  }
-		  
-	// 	  var validatePoint = function(point) {
-	// 	    if (typeof point !== 'number') throw {
-	// 	        name: 'InvalidParameter',
-	// 	        message: 'parameter must be a number'
-	// 	    };
-	// 	  }
-		  
-	// 	  var validatePointArray = function(points) {
-	// 	    if (!(points instanceof Array)) throw {
-	// 	        name: 'InvalidParameter',
-	// 	        message: 'parameter must be an array'
-	// 	    };
-	// 	    for(var i = 0; i < points.length; i++) {
-	// 	      if (typeof points[i] !== 'number') throw {
-	// 	        name: 'InvalidParameter',
-	// 	        message: 'array must consist only of numbers'
-	// 	      }
-	// 	    }
-	// 	  }
-		  
-	// 	  return {
-	// 	    pushInterval: function(from, to, inter) {
-	// 	      validateInterval(from, to);			///djv edit
-	// 	      intervals.push(new Interval(from, to, inter));
-	// 	    },
-	// 	    pushArray: function(from, to, validate) {
-	// 	      var val = (validate !== undefined) ? validate : true;
-	// 	      if (val) validateIntervalArray(from, to);
-	// 	      for(var i = 0; i < from.length; i++) {
-	// 	        intervals.push(new Interval(from[i], to[i]));
-	// 	      }
-	// 	    },
-	// 	    clearIntervalStack: function() {
-	// 	      intervals.length = 0;
-	// 	      Interval.prototype.id = 0;
-	// 	    },
-	// 	    buildTree: function() {
-	// 	      if (intervals.length === 0) throw { name: 'BuildTreeError', message: 'interval stack is empty' };
-	// 	      root = insertElements(endpointArray());
-	// 	      intervals.forEach(function(item) {
-	// 	        insertInterval(root, item);
-	// 	      });
-	// 	    },
-	// 	    printTree: function() {
-	// 	      traverseTree(root, function(node) {
-	// 	        console.log('\nSegment: (%d,%d)', node.segment.from, node.segment.to);
-	// 	        node.intervals.forEach(function(item, pos) {
-	// 	          console.log('Interval %d: (%d,%d)', pos, item.from, item.to);
-	// 	        });
-	// 	      });
-	// 	    },
-	// 	    printTreeTopDown: function() {
-	// 	      tree2Array(root).forEach(function(item, pos) {
-	// 	        console.log('Level %d:', pos);
-	// 	        item.forEach(function(item, pos) {
-	// 	          console.log('Segment %d: (%d,%d)', pos, item.segment.from, item.segment.to);
-	// 	          item.intervals.forEach(function(item, pos) {
-	// 	            console.log('  Interval %d: (%d,%d)', pos, item.from, item.to);
-	// 	          });
-	// 	        });
-	// 	      });
-	// 	    },
-	// 	    queryPoint: function(point, resultFn) {
-	// 	      validatePoint(point);
-	// 	      return this.queryPointArray([point], resultFn);
-	// 	    },
-	// 	    queryPointArray: function(points, resultFn, validate) {
-	// 	      var val = (validate !== undefined) ? validate : true;
-	// 	      if (val) validatePointArray(points);
-	// 	      var intervalArray = points.map(function(item) {
-	// 	        return new Interval(item, item);
-	// 	      });
-	// 	      return _queryInterval(intervalArray, resultFn);
-	// 	    },
-	// 	    // options: endpoints, resultFn
-	// 	    queryInterval: function(from, to, options) {
-	// 	      validateInterval(from, to);
-	// 	      return this.queryIntervalArray([from], [to], options);
-	// 	    },
-	// 	    // options: endpoints, resultFn, validate
-	// 	    queryIntervalArray: function(from, to, options) {
-	// 	      var intervalArray = [];
-	// 	      var val = (options !== undefined && options.validate !== undefined) ? options.validate : true;
-	// 	      var resFn = (options !== undefined && options.resultFn !== undefined) ? options.resultFn : undefined;
-	// 	      var disjointFn = (options !== undefined && options.endpoints === false) ? Interval.prototype.disjointExcl : Interval.prototype.disjointIncl;
-	// 	      if (val) validateIntervalArray(from, to);
-	// 	      for(var i = 0; i < from.length; i++) {
-	// 	        intervalArray.push(new Interval(from[i], to[i]));
-	// 	      }
-	// 	      return _queryInterval(intervalArray, resFn, disjointFn);
-	// 	    },
-	// 	    queryOverlap: function() {
-	// 	      _queryOverlap(root, []);
-	// 	      var result = [];
-	// 	      intervals.forEach(function(interval) {
-	// 	        var copy = new Interval();
-	// 	        copy.id = interval.id;
-	// 	        copy.from = interval.from;
-	// 	        copy.to = interval.to
-	// 	        copy.overlap = Object.keys(interval.overlap);
-	// 	        result.push(copy);
-	// 	      });
-	// 	      return result;
-	// 	    }
-	// 	  }
-	// }
-	///////////////////////////////////EndSegmentTree/////////////////////////////////////
-
-	///////////////////////////////////gtfsDataMod////////////////////////////////////////
-	var gtfsDataMod = require('./gtfsdata')
-	// var gtfsDataMod = (function(){
-	// 	function reqUndef(varb,name){
-	// 		if(udef(varb)){
-	// 			console.log(name+' is required');
-	// 			return true;
-	// 		}
-	// 		return false;
-	// 	}
-	// 	function isFunc(foo){
-	// 		if(typeof foo === 'function')
-	// 			return true;
-	// 		return false;
-	// 	}
-	// 	function haveReqFunc(foo){
-	// 		if(!isFunc(foo)){
-	// 			console.log('must include callback');
-	// 			return false;
-	// 		}
-	// 		return true;
-
-	// 	}
-	// 	function udef(varb){
-	// 		if(typeof varb === 'undefined')
-	// 			return true;
-	// 		return false;
-	// 	}
-	// 	function callback(cb,args){
-	// 		try{
-	// 			cb(args);	
-	// 		}catch(e){
-	// 			console.error(e.name+':',e.message);
-	// 		}
-	// 	}
-
-	// 	var test = false;
-	// 	var HOST = "http://localhost:1337"
-	// 		var getRoutesData = function getRoutesData(AgencyID,cb){
-	// 			//We use the availabs api to retrieve route data of specified id
-	// 			if(reqUndef(AgencyID,'AgencyID'))
-	// 				return;
-	// 			if(haveReqFunc(cb))
-	// 				var routeUrl = HOST+"/agency/"+AgencyID+"/routes";
-	// 			else
-	// 				return
-	// 			if(test){
-	// 				routeUrl = 'sampleRoutes.json';
-	// 			}
-	// 			currentAgency = AgencyID;
-	// 			d3.json(routeUrl,function(err,data){
-	// 				if(err) console.log(err);
-	// 				routeGeo = data;
-	// 				callback(cb,data);
-	// 			});
-	// 		};
-
-	// 		var getSegmentData = function getSegmentData(AgencyID,cb){
-	// 			if(reqUndef(AgencyID,'AgencyID'))
-	// 				return;
-	// 			if(haveReqFunc(cb))
-	// 				var segUrl = HOST+'/agency/'+AgencyID+'/segmentData';
-	// 			else
-	// 				return
-	// 			currentAgency = AgencyID;
-	// 			d3.json(segUrl,function(err,data){
-	// 				if(err) console.log(err);
-	// 				callback(cb,data);
-	// 			})
-	// 		};
-
-	// 		var getStopsData = function getStopsData(AgencyID,opts){
-	// 			if(reqUndef(AgencyID,'AgencyID'))
-	// 				return;		
-	// 			var stopUrl = HOST+"/agency/"+AgencyID+"/stops";
-	// 			if(opts){
-	// 				if(test){
-	// 					stopUrl = 'sampleStops.json';
-	// 				}else{
-	// 					stopUrl +='?'
-	// 					var route_id = (typeof opts.routearg === 'string')? routearg: undefined;
-	// 					if(!udef(route_id)){
-	// 						stopUrl += '&routeId='+ route_id;
-	// 					}
-	// 					if(opts.format){
-	// 						stopUrl += '&format=' + opts.format
-	// 					}
-	// 				}
-					
-	// 			}
-	// 			var cb = arguments[arguments.length-1];     //callback will always be the last one
-	// 			if(!haveReqFunc(cb))
-	// 				return;
-
-	// 			d3.json(stopUrl,function(err,data){			//use d3 to fetch data
-	// 				if(err) console.log(err);
-	// 				if(opts.Type && opts.Type === 'FeatureCollection'){
-	// 					var stops = topojson.feature(data,data.objects.stops);
-	// 					stops.bbox = data.bbox; stops.transform = data.transform;
-	// 					callback(cb,stops);
-	// 				}else{
-	// 					callback(cb,data);	
-	// 				}
-					
-	// 			});	
-	// 		}
-
-	// 		var getTripsData = function getTripsData(AgencyID,Day,Route_ID,cb){
-	// 			if(reqUndef(AgencyID,'AgencyID'))
-	// 				return;
-	// 			if(reqUndef(Day,'Day'))
-	// 				return;
-	// 			if(reqUndef(Route_ID,'Route_ID'))
-	// 				return;
-
-	// 			var cb = arguments[arguments.length-1];
-	// 			if(!haveReqFunc(cb))
-	// 				return;
-	// 			var tripURL = HOST+'/agency/'+AgencyID+'/routes/'+Route_ID+'/schedule?day='+Day;
-
-	// 			d3.json(tripURL,function(err,data){
-	// 				if(err) console.log(err);		
-	// 				tdata = {}
-	// 				data.forEach(function(el){
-	// 					if(!tdata[el.trip_id])
-	// 						tdata[el.trip_id] = []
-	// 					tdata[el.trip_id].push(el)
-	// 				})
-	// 				console.log(data)
-	// 				var keys = Object.keys(tdata)
-	// 				keys.forEach(function(key){
-	// 					var list = tdata[key],p1,p2;
-	// 					var objList = [];
-	// 					for(var i=0; i<list.length-1; i++){
-	// 						p1 = list[i]; p2 = list[i+1];
-	// 						objList.push({
-	// 							start_id:p1.stop_id,
-	// 							stop_id: p2.stop_id,
-	// 							start:   p1.departure_time,
-	// 							stop:    p2.arrival_time,
-	// 							direction: p2.direction_id
-	// 						})
-	// 					}
-	// 					tdata[key] = objList;
-
-	// 				})
-	// 				callback(cb,tdata);
-	// 			})
-	// 		};
-
-	// 	var movementTest = false;
-	// 		var getRouteTripsData = function getRouteTripsData(AgencyID, Day){
-	// 			if(reqUndef(AgencyID,'AgencyID'))
-	// 				return;
-	// 			if(reqUndef(Day,'Day'))
-	// 				return;
-
-	// 			var cb = arguments[arguments.length-1];
-	// 			if(!haveReqFunc(cb))
-	// 				return;
-	// 			var route_id = arguments[2];
-	// 			var tripURL = HOST+"/agency/"+AgencyID+"/day/"+Day+"/routeData";
-	// 			if(!udef(route_id) && route_id !== cb)
-	// 				tripURL += '?routeId='+route_id;
-
-	// 			if(movementTest){
-	// 				tripURL = 'MONDAY.json';
-	// 			}
-	// 			d3.json(tripURL,function(err,data){
-	// 				if(err) console.log(err);
-	// 				callback(cb,data);
-	// 			})
-	// 		};
-
-
-	// 		var Route = function(id){
-	// 			this.id = id;
-	// 			this.trips = [];
-	// 			this.addTrip = function(trip){
-	// 				this.trips.push(trip);
-	// 			}
-	// 		}
-	// 		var Trip = function(id,route_id){
-	// 			this.id = id;
-	// 			this.route_id = route_id;
-	// 			this.direction_id = 0;
-	// 			this.intervals = [];
-	// 			this.addInterval = function(interval){
-	// 				this.intervals.push(interval);
-	// 			}
-	// 		}
-	// 		var getSimpleSched = function(AgencyID,opt,cb){
-	// 			if(reqUndef(AgencyID,'AgencyID'))
-	// 				return console.log("undefined ID");
-	// 			if(reqUndef(opt.Day,'Day'))
-	// 				return console.log("undefined day");
-
-	// 			if(!haveReqFunc(cb))
-	// 				return console.log('bad function')
-	// 			var url = HOST+'/agency/'+AgencyID+'/'+opt.Day+'/schedule';
-	// 			d3.json(url,function(err,data){
-	// 				if(err) console.log(err);
-	// 				var Routes = {};
-	// 				var trips = {};
-	// 				data.forEach(function(trip){
-	// 					var id = JSON.stringify(trip.stops);
-	// 					trips[id] = trips[id] || new Trip(id,trip.route_id);
-	// 					trips[id].addInterval([trip.starting,trip.ending]);
-	// 					if(trips[id].direction_id && trips[id].direction_id !== trip.direction_id)
-	// 						console.log('!!!SHIFT!!!');
-	// 					trips[id].direction_id = trip.direction_id;
-	// 				})
-
-	// 				Object.keys(trips).forEach(function(trip_id){
-	// 					var trip = trips[trip_id];
-	// 					var rid = trip.route_id;
-	// 					Routes[rid] = Routes[rid] || new Route(rid);
-	// 					Routes[rid].addTrip(trip);
-	// 				})
-					
-	// 				if(typeof opt.route_id !== 'undefined')
-	// 					callback(cb,Routes[opt.route_id]);
-	// 				else
-	// 					callback(cb,Routes);
-	// 			})
-	// 		}
-
-	// 		var editStops = function(newStops){
-	// 			var url = HOST+'/data/upload/stops';
-	// 			d3.json(url).post('Hello World Sails POST',function(err,data){
-	// 				console.log(data);
-	// 			});
-	// 		}
-	// 		var editRoute = function(newRoute){
-	// 			var url = HOST+'/data/upload/route';
-	// 			d3.json(url).post('Hello World Sails POST',function(err,data){
-	// 				console.log(data);
-	// 			});	
-	// 		}
-
-	// 		return {
-	// 			'getRoutes': getRoutesData,
-	// 			'getStops' : getStopsData,
-	// 			'getTrips' : getTripsData,
-	// 			'getRouteTrips' : getRouteTripsData,
-	// 			'getSegmentData':getSegmentData,
-	// 			'getSchedule':getSimpleSched,
-	// 			'editStops': editStops,
-	// 			'editRoutes': editRoute,
-
-	// // 		}
-
-	// })();
-	///////////////////////////////////EndGtfsDataMod/////////////////////////////////////
-
-	///////////////////////////////////PlotMod////////////////////////////////////////////
-	var plotMod = require('./plot');
-	// var plotMod = function(Element){
-	// 	var Gpath,Gprojection;
-	// 	var HOST = "http://localhost:1337"
-	// 	var W_height=window.outerHeight,
-	// 		W_width=window.outerWidth;
-		
-	// 	var plotCalcs = function(Data,plotId,scaleFactor,feature){
-	// 		var group = d3.select('#'+plotId);
-	// 		var exists = group.node() !== null;
-	// 		var bbox = Data.bbox;
-	// 		var scale = .95/ Math.max( (bbox[3] - bbox[1])/W_width, (bbox[2] - bbox[0])/W_height  );
-	// 		var projection 
-	// 		if(!Gprojection)
-	// 			Gprojection = d3.geo.mercator()
-	// 	            .center(Data.transform.translate)
-	// 	            .scale(scaleFactor*scale)
-	// 	    projection = Gprojection
-	// 	    var path 
-	// 	    if(!Gpath)
-	// 	    	Gpath = d3.geo.path().projection(projection);
-	// 	    path = Gpath;
-	// 		if(!exists){
-	// 		    var x1,x2,y1,y2,bounds;
-	// 		    if(feature){
-	// 		    	bounds = path.bounds(feature);
-	// 		    }else{
-	// 		     	bounds = path.bounds(Data);
-	// 		    }
-	// 		    /*Here we want to resize the image of the paths to fit the svg
-	// 		    /*get the bounds of the figure*/
-	// 		    x1 = bounds[0][0], x2 = bounds[1][0],y1 = bounds[0][1], y2 = bounds[1][1];
-	// 		    /*set the frame of the svg to fit the size of our figure*/
-	// 		    var height = y2-y1;
-	// 		    var width = x2-x1;
-	// 			var svg = Element.append("svg")
-	// 						.attr("height",height+0.1*height)
-	// 						.attr("width", width + 0.1*width)
-	// 						.style("float","left");
-	// 			group = svg.append("g").attr("id",plotId);
-	// 			group.attr("transform",function(){return "translate("+(0-x1+0.05*width)+","+(0-y1+0.05*height)+")";  });
-	// 		}
-	// 		return {group:group, path:path, projection:projection};
-	// 	}
-
-	// 	var plotShape = function(shapeList,plotId,shapeId,type){
-	// 		var obj = {
-	// 			type:'Feature',
-	// 			geometry:{coordinates:shapeList,type:type},
-	// 			properties:{route_id:shapeId,route_color:'#444'}
-	// 		};
-	// 		var paths = d3.select('#'+plotId)
-	// 		.append('path')
-	// 		.attr('id',shapeId)
-	// 		.style("stroke",'#444')
-	// 		.style('fill','none')
-	// 		.style('stroke-width','2pt')
-	// 		.attr("d",Gpath(obj));
-	// 	}
-
-	// 	var plotRoutes = function plotRoutes(RouteData,plotId,scaleFactor,RouteId){
-	// 		var id, plotObj;
-	// 		if(RouteId){
-	// 			RouteData.features.forEach(function(d,i){
-
-	// 				if(d.properties.route_id === RouteId)
-	// 					id = i;
-	// 			});
-	// 			plotObj = plotCalcs(RouteData,plotId,scaleFactor,RouteData.features[id]);
-	// 		}else{
-	// 			plotObj = plotCalcs(RouteData,plotId,scaleFactor);
-	// 		}
-			
-	// 		var path = plotObj.path;
-	// 		var projection = plotObj.projection;
-	// 		var group = plotObj.group;
-			
-	// 		var paths = group.selectAll("path").data(RouteData.features.filter(function(d){if(RouteId){return d.properties.route_id === RouteId} return true}))
-	// 					.enter().append("path")
-	// 					.attr("id",function(d){return "route_"+d.properties.route_id;})
-	// 					.style("stroke",function(d){if(d.properties.route_color){return "#"+d.properties.route_color;}return '#000'})
-	// 					.style('fill','none')
-	// 					.style('stroke-width','1pt')
-	// 					paths.attr("d",path); 
-	// 		return plotObj;
-		 
-	// 	}
-
-		
-
-
-
-	// 	var plotStops = function plotStops(StopData,plotId,scaleFactor,junctions,RouteID){
-	// 		// var stops = topojson.feature(StopData,StopData.objects.stops);
-	// 		// stops.bbox = StopData.bbox;
-	// 		// stops.transform = StopData.transform;
-	// 		var stops = StopData;
-	// 		if(junctions){
-	// 			for (var i =0; i< junctions.length; i++){
-	// 				var junc = junctions[i].geometry.coordinates;
-	// 				var exists = false;
-	// 				stops.features.forEach(function(d,i){
-	// 					if (distance(d.geometry.coordinates,junc) === 0){
-	// 						exists = true;
-	// 					} 
-	// 				})
-	// 				if (!exists){
-	// 					stops.features.push(junctions[i]);
-	// 				}
-	// 			}		
-	// 		}
-	// 		var subset;
-	// 		if(RouteID){
-	// 			subset={type:"Feature",geometry:{coordinates:[],type:'LineString'}};
-	// 			StopData.features.forEach(function(stop,i){
-	// 				if(stop.properties.routes.indexOf(RouteID) >=0)
-	// 					subset.geometry.coordinates.push(stop.geometry.coordinates);
-	// 			});
-				
-	// 		}else{
-	// 			subset = undefined;
-	// 		}
-	// 		var plotObj = plotCalcs(stops,plotId,scaleFactor,subset);
-	// 		var group = plotObj.group;
-	// 		var projection = plotObj.projection;
-			
-	// 		var tip = d3.tip()
-	// 					.attr("class",'station')
-	// 					.style({
-	// 							  'line-height': '1',
-	// 							  'font-weight': 'bold',
-	// 							  'padding': '12px',
-	// 							  'background': 'rgba(0, 0, 0, 0.8)',
-	// 							  'color': '#fff',
-	// 							  'border-radius': '2px'
-	// 							})
-	// 					.offset([-10,0])
-	// 					.html(function(d){
-	// 						return "<strong>Station: </strong><span style='color:red'>" +d.properties.stop_id+d.properties.stop_name+"<br/>"+d.geometry.coordinates.toString()+"</span>";
-	// 					})
-
-	// 		group.selectAll(".stationLabel")
-	// 						.data(stops.features.filter(function(d){if (RouteID){ var match = false; d.properties.routes.forEach(function(d){ if(d === RouteID) match = true;}); return match} return true}))
-	// 						.enter().append("circle")
-	// 						.attr("class",function(d){
-	// 							var everyStation = " stationLabel";
-	// 							var classes ="";
-	// 							for(i in d.properties.routes)
-	// 								classes += " route_"+d.properties.routes[i];
-	// 							classes += everyStation;
-	// 							return classes
-	// 						})
-	// 						.attr("id",function(d){return "station_"+d.properties.stop_id;})
-	// 						.attr("transform",function(d){
-	// 							return "translate("+projection(d.geometry.coordinates)+")"
-	// 						})
-	// 						.attr("r",function(d){
-	// 							if(d.properties.stop_id.indexOf('j') <0)
-	// 								return 3;
-	// 							else 
-	// 								return 0
-	// 						})
-	// 						.style("fill","white")
-	// 						.style("stroke","black");
-
-	// 		group.call(tip);
-
-	// 			d3.selectAll(".stationLabel")
-	// 						.on("mouseover",function(d){
-	// 							tip.show(d);
-	// 							console.log(d.geometry.coordinates);
-	// 						})
-	// 						.on("mouseout",tip.hide)
-					
-	// 		return plotObj;
-	// 	};
-	// 	return {plotRoutes:plotRoutes,plotStops:plotStops,plotShape:plotShape};
-
-	// 	function getTripData(Route_ID,Day,AgencyID,Element){
-	// 		var tripURL = /*'temp.json'//*/HOST+"/agency/"+AgencyID+"/day/"+Day+"/routeData?routeId=A";
-	// 		d3.json(tripURL,function(err,data){
-	// 			if(err) console.log(err);
-	// 			var intervals = data;
-	// 			tripSetter.setTrip(Route_ID,'tripData',Element,'froute',intervals);
-	// 		})
-	// 	}
-
-
-
-	// 	function distance(a,b){
-	// 		return Math.sqrt( ( a[0] - b[0] ) * ( a[0] - b[0] ) + ( a[1] - b[1] ) * ( a[1] - b[1] ) );
-	// 	}
-	// };
-	///////////////////////////////////EndPlotMod/////////////////////////////////////////
-
-	///////////////////////////////////Pather/////////////////////////////////////////////
-	var pather = (function(){
-
-
-		var graph = newRGraph()
-
-		var getPathCollection = function getPathCollection(routes,stations){
-			var pathCollection = []
-
-			routes.forEach(function(d){  //for each route
-				var pathElement = {pathID:d.properties.route_id, stations: []} //create a element for the collection
-				stations.forEach(function(station){   //search through the stations 
-					station.properties.routes.forEach(function(route){
-						if(route === d.properties.route_id)             //if one has the same id
-							pathElement.stations.push(station);   //add it to the element list	
-					})
-					
-				})
-				pathCollection.push(pathElement);			 //add the current element to the collection
-			})
-			return pathCollection
-		}
-
-		var getStops = function getStops(route_id, Routes,pathCollection){
-			var curRoute;
-			Routes.forEach(function(route){
-				if(route.properties.route_id == route_id)
-					curRoute = route;
-			})
-			var stops = [];
-			pathCollection.forEach(function(path){
-				if(path.pathID == route_id)
-					stops = path.stations;
-			})
-
-			curRoute["stops"] = stops;
-			return curRoute;
-		}
-
-		
-		var deepCopy = function deepCopy(obj){
-						return JSON.parse(JSON.stringify(obj));
-					}
-
-		var mergeSegments = function mergeSegments(SegmentList){
-						var mergedFeatureCollection = {
-							type:'FeatureCollection',
-							features:[]
-						};
-						SegmentList.forEach(function(d){
-							d.features.forEach(function(feature){
-								mergedFeatureCollection.features.push(feature);
-							})
-						})
-						return mergedFeatureCollection
-					}
-		var toMultiLineString = function toMultiLineString(FeatureCollection){
-						var features = FeatureCollection.features;
-						var mlsObj = {geometry:{coordinates:[]},type:"MultiLineString"};
-						features.forEach(function(feature){
-							mlsObj.geometry.coordinates.push(feature.geometry.coordinates);
-						})
-						return mlsObj;
-					}
-
-		var getStations = function getStations(stops){
-						var uniqueStations = [];
-						var exists = false;
-						for(var i = 0; i< stops.length; i++){
-							var station = {'type':'Feature','properties':{'station_name':'' , 'stop_ids':[]}, 'geometry':stops[i].geometry};
-							for(var j=0; j< uniqueStations.length; j++){
-								exists = false;
-								if(nparse(uniqueStations[j].properties.stop_ids[0] ) === nparse(stops[i].properties.stop_id) ){
-									uniqueStations[j].properties.stop_ids.push(stops[i].properties.stop_id)
-									exists = true;
-									break;
-								}
-							}
-							if(!exists){
-								station.properties.station_name = stops[i].properties.stop_name;
-								station.properties.stop_ids.push(stops[i].properties.stop_id);
-								uniqueStations.push(station);
-							}
-							
-						}
-						return uniqueStations;
-					}
-
-		var getRange = function getRange(array,start,stop){
-						if(start < 0){
-							start = 0;
-						}
-						var retArray = [];
-						   //must include endpoints if it needs to interpolate!!!!!!
-						retArray = array.slice(start,stop+1);
-						
-						return retArray;
-					}
-
-
-		var findStop = function findStop(stopcoor,lineString){
-						var index = -1;
-							for(var i =0; i< lineString.length; i++){
-								var coor = lineString[i];
-									var d = distance(coor,stopcoor);
-									if(d === 0){
-										index = i;
-										break;
-
-									}
-							}
-						
-						return index;
-					}
-
-		var findStopsAtPoint = function findStopsAtPoint(point,stoplist){
-						var list = [];
-						stoplist.forEach(function(d,i){	
-							if(distance(d.geometry.coordinates,point)===0)
-								{
-									list.push(i);
-								}
-								
-							})
-						return list;
-					}
-
-		var getSet = function getSet(lineString,realStops){
-					   		var listOfStops = [];
-					   		realStops.forEach(function(d){
-					   			if(findStop(d.geometry.coordinates,lineString) >= 0)
-					   				listOfStops.push(d);
-					   		})
-					   		return listOfStops;
-					   	}
-
-		var getRouteSegs = function setShapes(newRoute){
-			var currentBin,index;
-			var routeSegments = {
-									type:'FeatureCollection',
-									features:[]
-								};
-			var splitList = [];
-			var realStops = getStations(newRoute.stops);
-			//trueStops = getTrueStops(newRoute.geometry,realStops);
-
-			var ret = getAllLines(newRoute.geometry,realStops);
-			var segmentsArr = ret.list;
-			var plotObj;
-			routeSegments = mergeSegments(segmentsArr);
-			
-
-			return {routeSegments:routeSegments};
-
-			function getAllLines(MultiLineString,stops){
-						var LIST = []   
-						var lines;
-						var ret;
-						console.log(MultiLineString)
-						MultiLineString.coordinates.forEach(function(d,i){
-							if(d.length != 0){
-								///Debug
-								console.log(i)
-								ret = getLines(d,stops,graph); 
-								LIST.push(ret.lines);
-							}
-						})
-						return {list:LIST};
-					}
-
-			function builder(newRoute,range,start,end,graph){
-							var obj = {
-										'type':'Feature',
-										'properties':newRoute.properties,
-										'geometry':{
-											'type':'LineString',
-											'coordinates':range
-										},
-										
-									};
-									obj.properties.start = start;
-									obj.properties.end = end;
-									graph.addEdgeToRoute(newRoute.properties.route_id,
-														nparse(start.properties.stop_ids[0]),
-														nparse(end.properties.stop_ids[0])
-														);
-									return obj;
-						}
-			function endPoint(routes,end,coors,dir){
-							return	{
-										'properties':{
-										'routes':routes,
-										'stop_code':null,
-										'stop_ids':[nparse(end.properties.stop_ids[0])+(dir===1)?'end':'start'],
-										'stop_name':'end'},
-										'geometry':{type:'Point',coordinates:coors} 
-									};
-			}
-			function getLines(lineString, realStops,graph){
-				 		var trueStops = getSet(lineString,realStops);  ///get all stops that lie and the current lineString
-						var startIndexes = findStopsAtPoint(lineString[0],trueStops); //find all stops that lie and the initial point
-						var starts = [];
-						startIndexes.forEach(function(index){			
-							starts.push(trueStops[index]);				//for each one push it onto the stack of stops that need to be addressed
-						})
-						var routeSegments = {
-							type:'FeatureCollection',
-							features:[]
-						};
-						var lines = []     						//array of linestrings	 	
-						var lastIndex = 0;
-						var rcode = newRoute.properties.route_id;
-							for(var i = 0; i< lineString.length; i++){ //run through every point on the line string;
-								var tempIndexes;					//create temp vars to hold immediately subsequent stops
-								var temps = [];
-								if( (tempIndexes = findStopsAtPoint(lineString[i],trueStops)).length !== 0 ){ //find the stops at our current point if they exist
-									
-									tempIndexes.forEach(function(index){
-										temps.push(trueStops[index]);			//push them on the stack
-									})
-									var range = getRange(lineString,lastIndex, i);//get the range of points on the lineString that lie between start and end points
-									//////Debug//////////
-									if(starts[0] && starts[0].properties.stop_ids[0] === '6098')
-										console.log(lastIndex,i);
-									lastIndex = i;
-									
-									if(starts.length != 0){
-										starts.forEach(function(start){			  //for each stop in the starting points
-											temps.forEach(function(end){		  //for each stop in the ending points   ... i.e. cross product
-												//create a lineString Feature object with the same properties as the route with current start and stop stations.
-												var obj = deepCopy(builder(newRoute,range,start,end,graph));
-												routeSegments.features.push(obj);   //add that path to our list of segments;
-											})
-										});
-									}else{
-										temps.forEach(function(end){
-											range = getRange(lineString,0,i)
-											var start = endPoint([rcode],end,lineString[0],1);
-											var obj = deepCopy(builder(newRoute,range,start,end,graph));
-											routeSegments.features.push(obj);	
-										});
-										
-									}
-									starts = temps;   //set the new starting node
-									startIndexes = tempIndexes;
-								}
-							}
-							// we have broken out of the loop so if there was a stop at the end
-							// last index should be the last point in the linestring
-							
-							if(lastIndex !== lineString.length-1){ // if not
-								range = getRange(lineString,lastIndex,i);
-								starts.forEach(function(start){
-									var end = endPoint([rcode],start,lineString[lineString.length-1],0);
-									var obj = deepCopy(builder(newRoute,range,start,end,graph));
-									routeSegments.features.push(obj);   //add that path to our list of segments;
-								})									
-							}	
-							return {'lines':routeSegments};	
-						}
-			}			
-
-		var nrGen = function(routes,stops,type){
-				pathcoll = getPathCollection(routes,stops);
-				return function(id){
-						var	newroute = getStops(id, routes, pathcoll);
-						var routeSegments = getRouteSegs(newroute).routeSegments;
-						if(typeof type !== 'undefined'){ // patch for working with intervals again
-							return {routeSegments:routeSegments};
-						}
-						var route = {geometry:{},properties:{},type:'Feature'};
-						var stationList = [],lineList = [];
-						var temp = routeSegments.features[0].properties;
-						var props = {
-								route_color:temp.route_color,
-								route_id:temp.route_id,
-								route_long_name: temp.route_long_name,
-								route_short_name:temp.route_short_name
-							}
-						routeSegments.features.forEach(function(route){
-							stationList.push([route.properties.start,route.properties.end]);
-							lineList.push(route.geometry.coordinates);
-						})
-						route.properties = props;
-						route.geometry ={type:'MultiLineString',coordinates:lineList};
-						route.stations = stationList;
-						return route;
-				};
-			}
-
-
-			function findJunctions(feats){
-			var eqpts = [];
-			feats.forEach(function(d){
-				var matrix = d.geometry.coordinates; 			//we have a multiline string so we start with a matrix of points
-				for(var i = 0; i < matrix.length; i++){  		//loop through each linestring
-					for(var j = 0; j< matrix.length; j++){	//compare it with all linestrings ahead of it
-						for(var irunner=0; irunner < matrix[i].length; irunner++){ //compare each point in i's linestring
-							start = (i !== j)? 0:irunner+1 
-							for(var jrunner=start; jrunner< matrix[j].length; jrunner++){ //to each point of j's linestring
-								var a = matrix[i][irunner];
-								var b = matrix[j][jrunner];
-								if( distance(a,b) === 0){
-									var index = -1;
-									eqpts.forEach(function(junc,i){
-										if(distance(junc.geometry.coordinates,a) === 0){
-											index = i;
-										}
-									})
-									if(index >= 0){
-										if(eqpts[index].properties.routes.indexOf(d.properties.route_id)<0)
-											eqpts[index].properties.routes.push(d.properties.route_id); 
-									}else{
-										var k =eqpts.length;
-										var f = {type:"Feature",geometry:{type:'Point',coordinates:a},properties:{station_name:'j'+k,stop_id:'j'+k,stop_name:'junction'+k,routes:[d.properties.route_id]}};
-										eqpts.push(f);	
-									}
-									
-								}
-							}
-						}
-					}
-				}	
-			})	
-			return eqpts;
-		}
-
-		var junctionUtil = {};
-		junctionUtil.getJuncs = function getJuncs(RouteData){
-			return findJunctions(RouteData.features);
-		};
-		junctionUtil.mergeJuncs = function mergeJuncs(stops,junctions){
-			for (var i =0; i< junctions.length; i++){
-				var junc = junctions[i].geometry.coordinates;
-				var exists = false;
-				stops.features.forEach(function(d,i){
-					if (distance(d.geometry.coordinates,junc) === 0){
-						exists = true;
-					} 
-				})
-				//if (!exists){
-					stops.features.push(junctions[i]);
-				//}
-			}
-		}
-
-		function distance(a,b){
-			var d =  Math.sqrt( ( a[0] - b[0] ) * ( a[0] - b[0] ) + ( a[1] - b[1] ) * ( a[1] - b[1] ) );
-			return d;
-		}
-		return {junctionUtil:junctionUtil,getPathCollection:getPathCollection,getStops:getStops,getRouteSegs:getRouteSegs,nrGen:nrGen,graph:graph}
-	})();
-
-	//////////////////////////////////EndPather//////////////////////////////////////////
-
-	//////////////////////////////////pathPlotter////////////////////////////////////////
-	var pathPlotter = require('./pathPlotter');
-	// var pathPlotter = (function(){
-
-	// 	var plotNewRoute = function plotNewRoute(route,path,plotId){
-	// 		var plot = d3.select("#"+plotId);
-	// 		var paths = plot.selectAll("#"+plotId+" path#route_"+route.properties.route_id);
-
-	// 		var features = [];
-	// 		var len = route.stations.length;
-	// 		for(var i = 0; i< len; i++){
-	// 			var	startStop = route.stations[i];
-	// 			var line = route.geometry.coordinates[i];
-	// 			features.push({type:'Feature',geometry:{coordinates:line,type:'LineString'},properties:{start:startStop[0],end:startStop[1]}});
-	// 		}
-
-	// 		paths.data(features)
-	// 				.enter().append("path")
-	// 				.attr("class",function(d){return "route_"+route.properties.route_id;})
-	// 				.attr("id",function(d,i){ 
-	// 					str = "_s_"
-	// 					+nparse(d.properties.start.properties.stop_ids[0])+"_e_"+nparse(d.properties.end.properties.stop_ids[0]);
-	// 				return str;
-					
-	// 				})
-
-
-	// 				.style("stroke",function(d){var color = route.properties.route_color; if(color){return '#'+color;} return '#000' })
-	// 				.style('fill','none')
-	// 				.style('stroke-width','1pt')
-	// 				.on('mouseover',function(d){
-	// 					d3.select(this).style({'stroke-width':'16pt',opacity:'0.6'})
-	// 				})
-	// 				.on('mouseout',function(d){
-	// 					d3.select(this).style({'stroke-width':'1pt',opacity:'0.6'})
-	// 				})
-	// 				.attr("d",path); 			
-	// 	}
-
-	// 	var plotter = function plotter(id,generator,settings){
-	// 		var routeSegments = generator(id);
-	// 		if(routeSegments.geometry.coordinates.length >0){
-	// 			if(typeof settings.path !== 'undefined'){
-	// 				plotNewRoute(routeSegments,settings.path,settings.plotId);
-	// 			}else{
-	// 				plotObj = plotCalcs(settings.data,settings.plotId,settings.scaleFactor);
-	// 				plotNewRoute(routeSegments,plotObj.path,settings.plotId);
-
-	// 			}
-	// 		}
-	// 		return routeSegments;
-	// 	}
-
-	// 	var checkSettings = function(settings){
-	// 		if(typeof settings === 'undefined' ||  (typeof settings.path === 'undefined' && typeof settings.data.transform === 'undefined') ){
-	// 			throw {
-	// 					name:'UsageError',
-	// 					message: 'need existing plot settings or data defined transform and bounding box'
-	// 				};
-	// 		}
-	// 	}
-
-	// 	var plotSegments = function(segData,plotId,scaleFactor,RouteId){
-	// 		var path,plotObj;
-	// 		if(RouteId){
-	// 			segData.features.forEach(function(d,i){
-	// 				if(d.properties.route_id === RouteId){
-	// 					plotObj = plotCalcs(segData,plotId,scaleFactor,segData.features[i]);
-	// 					path = plotObj.path;
-	// 					plotNewRoute(d,path,plotId);
-	// 				}
-	// 			});
-				
-	// 		}else{
-	// 			plotObj = plotCalcs(segData,plotId,scaleFactor);
-			
-	// 			path = plotObj.path;
-	// 			segData.features.forEach(function(route){
-	// 				if(segData.features.length > 0 && !RouteId)
-	// 					plotNewRoute(route,path,plotId);
-	// 				else
-	// 					console.log('Empty Route')
-	// 			});
-	// 		}
-	// 	}
-
-	// 	var plotPathedRoutes = function plotPathedRoutes(routes,stops,settings,routeId){
-	// 		var generator = pather.nrGen(routes,stops);
-	// 		checkSettings(settings);
-	// 		if(!settings.path){
-	// 			settings.path = plotCalcs(settings.data,settings.plotId,settings.scaleFactor).path;
-	// 		}
-	// 		routes.forEach(function(route){
-	// 			if(route.geometry.coordinates.length > 0){
-	// 				if(routeId){
-	// 					if(routeId === route.properties.route_id){
-	// 						plotter(route.properties.route_id,generator,settings);	
-	// 					}
-	// 				}else{
-	// 					plotter(route.properties.route_id,generator,settings);
-	// 				}
-	// 			}
-	// 		})
-	// 	};
-	// 	var plotCalcs = function(Data,plotId,scaleFactor,feature){
-	// 		var W_height=window.outerHeight,
-	// 		W_width=window.outerWidth;
-	// 		var group = d3.select('#'+plotId);
-	// 		var exists = group.node() !== null;
-			
-	// 		var bbox = Data.bbox;
-	// 		var scale = .95/ Math.max( (bbox[3] - bbox[1])/W_width, (bbox[2] - bbox[0])/W_height  );
-			
-	// 		var projection = d3.geo.mercator()
-	// 	            .center(Data.transform.translate)
-	// 	            .scale(scaleFactor*scale)
-		            
-	// 	    var path = d3.geo.path().projection(projection);
-	// 		if(!exists){
-	// 			var Element = d3.select('body').append('div');
-	// 		    var x1,x2,y1,y2,bounds;
-	// 		    var bounds;
-	// 		    if(feature){
-	// 		    	bounds = path.bounds(feature);
-	// 		    }else{
-	// 		    	bounds = path.bounds(Data);
-	// 		    }
-	// 		    /*Here we want to resize the image of the paths to fit the svg
-	// 		    /*get the bounds of the figure*/
-	// 		    x1 = bounds[0][0], x2 = bounds[1][0],y1 = bounds[0][1], y2 = bounds[1][1];
-	// 		    /*set the frame of the svg to fit the size of our figure*/
-	// 		    var height = y2-y1;
-	// 		    var width = x2-x1;
-	// 			var svg = Element.append("svg")
-	// 						.attr("height",height+0.1*height)
-	// 						.attr("width", width + 0.1*width)
-	// 						.style("float","left");
-	// 			group = svg.append("g").attr("id",plotId);
-	// 			group.attr("transform",function(){return "translate("+(0-x1+0.05*width)+","+(0-y1+0.05*height)+")";  });
-	// 		}
-	// 		return {group:group, path:path, projection:projection};
-	// 	}
-
-		
-	// 	return {plotPaths:plotPathedRoutes,plotSegs:plotSegments};
-
-	// })()
-	///////////////////////////////////EndpathPlotter//////////////////////////////////////////
-
-	///////////////////////////////////Mover//////////////////////////////////////////////
-	var mover = require('./mover');
-	// var mover = (function(){
-	// 	var tripRanges = {
-	// 		ranges:{},
-	// 		addRanges:function(rangeObj){
-	// 			var keys = Object.keys(rangeObj);
-	// 			var ranges = this.ranges
-	// 			keys.forEach(function(tripid){
-	// 				ranges[tripid] = rangeObj[tripid];
-	// 			})
-	// 		},
-	// 		getRanges:function(){
-	// 			return this.ranges;
-	// 		}
-	// 	}
-
-
-
-	// 	function parseTime(s) {
-	// 	   	  var formatTime = d3.time.format("%X");
-	// 		  var t = formatTime.parse(s);
-	// 		  // if (t != null && t.getHours() < 5) t.setDate(t.getDate() + 1);
-	// 		  return t;
-	// 	}		
-
-	// 		var slider = function(){
-	// 			var HOST = "http://localhost:1337"
-
-
-	// 			function getMaxOfArray(numArray){
-	// 				return Math.max.apply(null,numArray);
-	// 			}
-
-	// 			var buildSlider = function buildSlider(Element,start,end){
-
-	// 				var formatTime = d3.time.format("%X");
-	// 				var isClock = false;
-	// 				var margin = {top: 50, right: 200, bottom: 50, left: 200},
-	// 				    width = 120 - margin.left - margin.right,
-	// 				    height = 750- margin.bottom - margin.top;
-	// 				var buffer = 20;
-
-	// 				var y = d3.time.scale()
-	// 				    .domain([parseTime(start), parseTime(end)])
-	// 				    .range([0, height])
-	// 				    .clamp(true);
-
-	// 				var brush = d3.svg.brush()
-	// 				    .y(y)
-	// 				    .extent([parseTime(start),parseTime(end)])
-	// 				    .on("brush", brushed);
-	// 				var div = Element.append("div");
-	// 					div.attr("id","sliderDiv")
-	// 						.style("float","left");
-	// 				var svg = div.append("svg")
-	// 				    .attr("width", width + margin.left + margin.right)
-	// 				    .attr("height", height + margin.top + margin.bottom)
-	// 				  	.append("g")
-	// 				   	.attr("transform", "translate(" +buffer+ "," + 0 + ")")
-					
-					    
-	// 				svg.append("g")
-	// 				    .attr("class", "y axis")
-	// 				    .attr("transform", "translate(0,"+margin.top+")")
-	// 				    .call(d3.svg.axis()
-	// 				      .scale(y)
-	// 				      .orient("right")   //this says align axis vertically with labels on right
-	// 				      .ticks(32)
-	// 				      .tickSize(0)
-	// 				      .tickFormat(formatTime)
-	// 				      .tickPadding(12))
-	// 				  .select(".domain")
-	// 				  .select(function() { return this.parentNode.appendChild(this.cloneNode(true)); })
-	// 				    .attr("class", "halo");
-
-	// 				var slider = svg.append("g")
-	// 				    .attr("class", "slider")
-	// 				    .attr("transform", "translate(0,"+margin.top+")")
-	// 				    .call(brush);
-
-	// 				slider.selectAll(".extent,.resize")
-	// 				    .remove();
-
-	// 				slider.select(".background")
-	// 					.attr("width","50");
-					    
-	// 				var handle = slider.append("circle")
-	// 				    .attr("class", "handle")
-	// 				    .attr("transform", "translate(0,"+0+")")
-	// 				    .attr("r", 9);
-
-	// 				  //  slider
-	// 				  //   .call(brush.event)
-	// 				  // .transition() // gratuitous intro!
-	// 				  //   .duration(750)
-	// 				  //   .call(brush.extent([parseTime("5:30AM"),parseTime("5:30AM")]))
-	// 				  //   .call(brush.event);
-
-					
-
-
-
-	// 				function brushed() {
-	// 				  var value = brush.extent()[0];
-	// 				  if (d3.event.sourceEvent) { // not a programmatic event
-	// 				  	mouse = d3.mouse(this)[1];
-	// 				    value = y.invert(d3.mouse(this)[1]);
-	// 				    brush.extent([value, value]);
-	// 				  }
-
-	// 				  handle.attr("cy", y(value));
-	// 				  setTime(value);
-	// 				  moveTrip(value,y);
-	// 				}
-
-
-	// 				function setTime(time){
-	// 					if( !isClock){
-	// 						var div = d3.select("body").append("div");
-	// 							div.append("h3").attr("id","clock");
-	// 							div.style("float","left");
-	// 						isClock = true;
-	// 					}
-	// 					var clock = d3.select("#clock");
-
-	// 					if (time instanceof Date){
-	// 						time = formatTime(time)	
-	// 					}
-	// 					clock.text( "Current Time: "+time )
-	// 				}
-					
-	// 			}
-	// 			return {buildSlider:buildSlider}
-	// 		}
-
-	// 		function moveTrip(value,map){
-	// 			var intervalList = {},rangeList = [],keeper = getKeeper();
-	// 			var v = timeToInt(d3.time.format('%X')(value));
-	// 			var segTree = getIntTree(), rangeTree = getRangeTree();
-	// 			segTree.queryPoint(v,function(results){
-	// 				results.forEach(function(result){
-	// 					var id = result.inter.name;
-	// 					intervalList[id] = result.inter.interval;
-	// 				})
-	// 			})
-	// 			rangeTree.queryPoint(v,function(results){
-	// 				results.forEach(function(result){
-	// 					var trip_id = result.inter;
-	// 					if(!intervalList[trip_id])
-	// 						rangeList.push(trip_id);
-	// 				});
-	// 			});
-	// 			if(intervalList){
-	// 				var activeTrips = Object.keys(intervalList);
-	// 				activeTrips = activeTrips.concat(rangeList);
-	// 				keeper.filter(activeTrips);
-	// 				var trips = d3.select("#plot").selectAll(".trip").data(activeTrips);
-	// 				trips.enter().append("circle")
-	// 				trips.attr("class","trip")
-	// 				trips.attr("id",function(d){
-	// 					return correctID(d);})
-	// 				trips.attr("r","4")
-	// 				trips.exit().remove()
-	// 				trips.attr("transform",function(d){
-	// 					var interval = intervalList[d];
-	// 					if(interval){ 
-	// 						var identifier = '.'+interval.lineClass+'#_s_'+interval.start_id+'_e_'+interval.stop_id
-	// 						var path1 = d3.select(identifier).node();
-	// 						var reverse = false;
-	// 						if(path1 === null)
-	// 						{
-	// 							identifier = '.'+interval.lineClass+'#_s_'+interval.stop_id+'_e_'+interval.start_id
-	// 							path1 = d3.select(identifier).node();
-	// 							if( path1 === null)
-	// 								return 'translate(50,50)';
-	// 							reverse = true;
-	// 						}
-	// 						////////////////Debug//////////////
-	// 						console.log(identifier)
-	// 						var length = path1.getTotalLength();   //get length of the curve
-	// 						var shift = parseTime(interval.start).getTime();
-	// 						var	time = (value.getTime()-shift)/(parseTime(interval.stop).getTime() - shift);   //calc % point in time interval
-							
-	// 						if(!isFinite(time*length)){
-	// 							return "translate(50,50)";
-	// 						}
-	// 						var p;
-	// 						if(reverse)
-	// 							p = path1.getPointAtLength(length-time*length);
-	// 						else
-	// 							p = path1.getPointAtLength(time*length);             //find that % point along the curve
-	// 						var temp = "translate(" + p.x+"," + p.y+")"; 
-	// 						keeper.add(d,temp);
-	// 						return temp;
-	// 					}
-	// 					else{
-	// 						return keeper.query(d);
-	// 					}
-
-							
-							
-
-	// 				});
-	// 			}
-	// 			function correctID(d){
-	// 				return d.replace(/\./g,'_');
-	// 			}
-	// 		}
-
-	// 		var getKeeper = (function(){
-	// 			var keepMap = {};
-	// 			return function(){
-	// 				return {
-	// 					add:function(key,value){
-	// 						keepMap[key] = value; 
-	// 					},
-	// 					clear:function(){
-	// 						keepMap = {}
-	// 					},
-	// 					query:function(key){
-	// 						return keepMap[key];
-	// 					},
-	// 					filter:function(keyList){
-	// 						newMap = {};
-	// 						keyList.forEach(function(k){
-	// 							if(keepMap[k])
-	// 								newMap[k] = keepMap[k];
-	// 						})
-	// 						keepMap = newMap;
-	// 					}
-
-	// 				}
-	// 			}
-	// 		})();
-
-	// 		function getInitialTrips(Intervals){
-	// 			var tripArray; 
-	// 		}
-	// 		var getIntTree = (function(){
-	// 			var segTree = segmentTree();
-	// 			return function(){return segTree};	
-	// 		} )();
-	// 		var getRangeTree = (function(){
-	// 			var rangeTree = segmentTree();
-	// 			return function() {return rangeTree};
-	// 		})();
-
-
-
-	// 		function timeToInt(time){
-	// 			var place = 1;
-	// 			var val = 0;
-	// 			for(var i = time.length-1; i>=0; i--){
-	// 				var d = parseInt(time[i]);
-	// 				if(!isNaN(d)){
-	// 					val += d*place;
-	// 					place = place * 10;
-	// 				}
-	// 			}
-	// 			return val;
-	// 		}
-	// 		var tripSetter =(function(){ 
-	// 			var built = false;
-	// 			var isBuilt = function(){return built};
-	// 			var setBuilt = function(){built = true};
-				
-	// 			return {
-	// 				setTrip:function(Element,data,times,id,filter){
-	// 					var segTree = getIntTree();
-	// 					var rangeTree = getRangeTree();
-	// 					if(id){
-	// 						parseRouteData(data.intervalObj['route_'+id],segTree,rangeTree,filter);
-	// 					}else{
-	// 					 	parseRouteData(data,segTree,rangeTree,filter);	
-	// 					}
-	// 					segTree.buildTree();
-	// 					rangeTree.buildTree();
-	// 					var s = slider(); 
-	// 					if(!isBuilt()){
-	// 						if(times)
-	// 							s.buildSlider(Element,times.start,times.end);
-	// 						else
-	// 							s.buildSlider(Element,'09:00:00','17:30:00');
-	// 						setBuilt();
-	// 					}
-	// 				},
-	// 				setNewTrip:function(Element,data,times,id,filter){
-	// 					var segTree = getIntTree();
-	// 					var rangeTree = getRangeTree();
-	// 					if(id){
-	// 						parseRoutes(data.intervalObj['route_'+id],segTree,rangeTree,filter);
-	// 					}else{
-	// 					 	parseRoutes(data,segTree,rangeTree,filter);	
-	// 					}
-	// 					segTree.buildTree();
-	// 					rangeTree.buildTree();
-	// 					var s = slider(); 
-	// 					if(!isBuilt()){
-	// 						if(times)
-	// 							s.buildSlider(Element,times.start,times.end);
-	// 						else
-	// 							s.buildSlider(Element,'09:00:00','17:30:00');
-	// 						setBuilt();
-	// 					}
-	// 				}
-	// 			}
-	// 		})();
-
-	// 		function parseRoutes(data,segTree,rangeTree,filter){
-	// 			if(typeof data.intervalObj !== 'undefined'){
-	// 				data = data.intervalObj;
-	// 				var routes = Object.keys(data);
-	// 					routes.forEach(function(route){
-	// 						parseTrips(data[route],segTree,rangeTree,filter);
-	// 					})
-	// 			}else{
-	// 				parseTrips(data,segTree,rangeTree,filter);
-	// 			}
-
-	// 		}
-
-	// 		function parseTrips(trips,segTree,rangeTree,filter){
-	// 			Object.keys(trips).forEach(function(trip){
-	// 				trips[trip].forEach(function(interval){
-	// 					var start = timeToInt(interval.start);
-	// 					var end = timeToInt(interval.stop);
-	// 					var intervalObj;
-	// 					if(start < end){
-	// 						intervalObj = {name:trip,interval:interval}
-	// 						segTree.pushInterval(start,end,intervalObj);
-	// 					}
-	// 				})
-	// 				var begin = timeToInt(trips[trip][0].start);
-	// 				var end = timeToInt(trips[trip][trips[trip].length-1].stop);
-	// 				if(begin < end){
-	// 					rangeTree.pushInterval(begin,end,trip);
-	// 				}
-	// 			})
-	// 		}
-
-	// 		function parseRouteData(data,segTree,rangeTree,filter){
-	// 			if(typeof data.intervalObj !== 'undefined'){
-	// 				data = data.intervalObj;
-	// 				var routes = Object.keys(data);
-	// 					routes.forEach(function(route){
-	// 						parseTripData(data[route].trips,segTree,rangeTree,filter);
-	// 					})
-	// 			}else{
-	// 				parseTripData(data.trips,segTree,rangeTree,filter);
-	// 			}
-
-	// 		}
-	// 		function parseTripData(trips,segTree,rangeTree,filter){
-	// 			var keys = Object.keys(trips);
-	// 			keys.forEach(function(trip){
-	// 					if(!filter || filter.indexOf(trip) >= 0){
-	// 						trips[trip].intervals.forEach(function(interval){
-	// 							var start = timeToInt(interval.start);
-	// 							var end = timeToInt(interval.stop);
-	// 							if(start<end){
-	// 								intervalObj = {name:trip,interval:interval};
-	// 								segTree.pushInterval(start,end,intervalObj);
-	// 							}
-	// 						})
-	// 						var begin = timeToInt(trips[trip].range.begin);
-	// 						var end = timeToInt(trips[trip].range.end);
-	// 						if(begin < end){
-	// 							rangeTree.pushInterval(begin,end,trip);
-	// 						}
-	// 					}
-	// 				})
-	// 		}
-
-	// 		function getTripRanges(routeIntervals){
-	// 			var keys = Object.keys(routeIntervals);
-	// 			var ranges = {}
-	// 			keys.forEach(function(id){
-	// 				var currentRoute = routeIntervals[id];
-	// 				tripKeys = Object.keys(currentRoute);
-	// 				tripKeys.forEach(function(k) {
-	// 					ranges[k] = currentRoute[k].range;	
-	// 				})
-					 
-	// 			})
-	// 			return ranges;
-	// 		}
-
-	// 		var TimeObj = function(){
-	// 				this.start_id='';
-	// 				this.stop_id = '';
-	// 				this.start='';
-	// 				this.stop = '';
-	// 				this.lineID = '';
-	// 				this.lineClass='';
-	// 			}
-
-	// 		var intervalStructure = {
-	// 			intervalObj:{},
-	// 		// 	addIntervals:function (tripData,RouteData,route_id){
-	// 		// 		this.intervalObj[route_id] = getAllRouteIntervals(tripData,RouteData,route_id)();
-	// 		// 	},
-
-	// 			getIntervals:function(){
-	// 				return this.intervalObj;
-	// 			}
-	// 		}
-
-	// 		return {tripSetter:tripSetter}
-	// })();
-	///////////////////////////////////EndMover///////////////////////////////////////////
-
-
-
-	return {'gtfsData':gtfsDataMod, 'plotter':plotMod, 'pather':pathPlotter, 'mover':mover, other:pather};
-
-})();
-
-if(typeof module !== 'undefined'){
-	module.exports = livegtfs;
-}
-},{"./graphstruct":5,"./gtfsdata":6,"./mover":8,"./pathPlotter":9,"./plot":10}],8:[function(require,module,exports){
-var segmentTree = require('./segment-tree-browser');
-var mover = (function(){
-	var tripRanges = {
-		ranges:{},
-		addRanges:function(rangeObj){
-			var keys = Object.keys(rangeObj);
-			var ranges = this.ranges
-			keys.forEach(function(tripid){
-				ranges[tripid] = rangeObj[tripid];
-			})
-		},
-		getRanges:function(){
-			return this.ranges;
-		}
-	}
-
-
-
-	function parseTime(s) {
-	   	  var formatTime = d3.time.format("%X");
-		  var t = formatTime.parse(s);
-		  // if (t != null && t.getHours() < 5) t.setDate(t.getDate() + 1);
-		  return t;
-	}		
-
-		var slider = function(){
-			var HOST = "http://localhost:1337"
-
-
-			function getMaxOfArray(numArray){
-				return Math.max.apply(null,numArray);
-			}
-
-			var buildSlider = function buildSlider(Element,start,end){
-
-				var formatTime = d3.time.format("%X");
-				var isClock = false;
-				var margin = {top: 50, right: 200, bottom: 50, left: 200},
-				    width = 120 - margin.left - margin.right,
-				    height = 750- margin.bottom - margin.top;
-				var buffer = 20;
-
-				var y = d3.time.scale()
-				    .domain([parseTime(start), parseTime(end)])
-				    .range([0, height])
-				    .clamp(true);
-
-				var brush = d3.svg.brush()
-				    .y(y)
-				    .extent([parseTime(start),parseTime(end)])
-				    .on("brush", brushed);
-				var div = Element.append("div");
-					div.attr("id","sliderDiv")
-						.style("float","left");
-				var svg = div.append("svg")
-				    .attr("width", width + margin.left + margin.right)
-				    .attr("height", height + margin.top + margin.bottom)
-				  	.append("g")
-				   	.attr("transform", "translate(" +buffer+ "," + 0 + ")")
-				
-				    
-				svg.append("g")
-				    .attr("class", "y axis")
-				    .attr("transform", "translate(0,"+margin.top+")")
-				    .call(d3.svg.axis()
-				      .scale(y)
-				      .orient("right")   //this says align axis vertically with labels on right
-				      .ticks(32)
-				      .tickSize(0)
-				      .tickFormat(formatTime)
-				      .tickPadding(12))
-				  .select(".domain")
-				  .select(function() { return this.parentNode.appendChild(this.cloneNode(true)); })
-				    .attr("class", "halo");
-
-				var slider = svg.append("g")
-				    .attr("class", "slider")
-				    .attr("transform", "translate(0,"+margin.top+")")
-				    .call(brush);
-
-				slider.selectAll(".extent,.resize")
-				    .remove();
-
-				slider.select(".background")
-					.attr("width","50");
-				    
-				var handle = slider.append("circle")
-				    .attr("class", "handle")
-				    .attr("transform", "translate(0,"+0+")")
-				    .attr("r", 9);
-
-				  //  slider
-				  //   .call(brush.event)
-				  // .transition() // gratuitous intro!
-				  //   .duration(750)
-				  //   .call(brush.extent([parseTime("5:30AM"),parseTime("5:30AM")]))
-				  //   .call(brush.event);
-
-				
-
-
-
-				function brushed() {
-				  var value = brush.extent()[0];
-				  if (d3.event.sourceEvent) { // not a programmatic event
-				  	mouse = d3.mouse(this)[1];
-				    value = y.invert(d3.mouse(this)[1]);
-				    brush.extent([value, value]);
-				  }
-
-				  handle.attr("cy", y(value));
-				  setTime(value);
-				  moveTrip(value,y);
-				}
-
-
-				function setTime(time){
-					if( !isClock){
-						var div = d3.select("body").append("div");
-							div.append("h3").attr("id","clock");
-							div.style("float","left");
-						isClock = true;
-					}
-					var clock = d3.select("#clock");
-
-					if (time instanceof Date){
-						time = formatTime(time)	
-					}
-					clock.text( "Current Time: "+time )
-				}
-				
-			}
-			return {buildSlider:buildSlider}
-		}
-
-		function moveTrip(value,map){
-			var intervalList = {},rangeList = [],keeper = getKeeper();
-			var v = timeToInt(d3.time.format('%X')(value));
-			var segTree = getIntTree(), rangeTree = getRangeTree();
-			segTree.queryPoint(v,function(results){
-				results.forEach(function(result){
-					var id = result.inter.name;
-					intervalList[id] = result.inter.interval;
-				})
-			})
-			rangeTree.queryPoint(v,function(results){
-				results.forEach(function(result){
-					var trip_id = result.inter;
-					if(!intervalList[trip_id])
-						rangeList.push(trip_id);
-				});
-			});
-			if(intervalList){
-				var activeTrips = Object.keys(intervalList);
-				activeTrips = activeTrips.concat(rangeList);
-				keeper.filter(activeTrips);
-				var trips = d3.select("#plot").selectAll(".trip").data(activeTrips);
-				trips.enter().append("circle")
-				trips.attr("class","trip")
-				trips.attr("id",function(d){
-					return correctID(d);})
-				trips.attr("r","4")
-				trips.exit().remove()
-				trips.attr("transform",function(d){
-					var interval = intervalList[d];
-					if(interval){ 
-						var identifier = '.'+interval.lineClass+'#_s_'+interval.start_id+'_e_'+interval.stop_id
-						var path1 = d3.select(identifier).node();
-						var reverse = false;
-						if(path1 === null)
-						{
-							identifier = '.'+interval.lineClass+'#_s_'+interval.stop_id+'_e_'+interval.start_id
-							path1 = d3.select(identifier).node();
-							if( path1 === null)
-								return 'translate(50,50)';
-							reverse = true;
-						}
-						var length = path1.getTotalLength();   //get length of the curve
-						var shift = parseTime(interval.start).getTime();
-						var	time = (value.getTime()-shift)/(parseTime(interval.stop).getTime() - shift);   //calc % point in time interval
-						
-						if(!isFinite(time*length)){
-							return "translate(50,50)";
-						}
-						var p;
-						if(reverse)
-							p = path1.getPointAtLength(length-time*length);
-						else
-							p = path1.getPointAtLength(time*length);             //find that % point along the curve
-						var temp = "translate(" + p.x+"," + p.y+")"; 
-						keeper.add(d,temp);
-						return temp;
-					}
-					else{
-						return keeper.query(d);
-					}
-
-						
-						
-
-				});
-			}
-			function correctID(d){
-				return d.replace(/\./g,'_');
-			}
-		}
-
-		var getKeeper = (function(){
-			var keepMap = {};
-			return function(){
-				return {
-					add:function(key,value){
-						keepMap[key] = value; 
-					},
-					clear:function(){
-						keepMap = {}
-					},
-					query:function(key){
-						return keepMap[key];
-					},
-					filter:function(keyList){
-						newMap = {};
-						keyList.forEach(function(k){
-							if(keepMap[k])
-								newMap[k] = keepMap[k];
-						})
-						keepMap = newMap;
-					}
-
-				}
-			}
-		})();
-
-		function getInitialTrips(Intervals){
-			var tripArray; 
-		}
-		var getIntTree = (function(){
-			var segTree = segmentTree();
-			return function(){return segTree};	
-		} )();
-		var getRangeTree = (function(){
-			var rangeTree = segmentTree();
-			return function() {return rangeTree};
-		})();
-
-
-
-		function timeToInt(time){
-			var place = 1;
-			var val = 0;
-			for(var i = time.length-1; i>=0; i--){
-				var d = parseInt(time[i]);
-				if(!isNaN(d)){
-					val += d*place;
-					place = place * 10;
-				}
-			}
-			return val;
-		}
-		var tripSetter =(function(){ 
-			var built = false;
-			var isBuilt = function(){return built};
-			var setBuilt = function(){built = true};
-			
-			return {
-				setTrip:function(Element,data,times,id,filter){
-					var segTree = getIntTree();
-					var rangeTree = getRangeTree();
-					if(id){
-						parseRouteData(data.intervalObj['route_'+id],segTree,rangeTree,filter);
-					}else{
-					 	parseRouteData(data,segTree,rangeTree,filter);	
-					}
-					segTree.buildTree();
-					rangeTree.buildTree();
-					var s = slider(); 
-					if(!isBuilt()){
-						if(times)
-							s.buildSlider(Element,times.start,times.end);
-						else
-							s.buildSlider(Element,'09:00:00','17:30:00');
-						setBuilt();
-					}
-				},
-				setNewTrip:function(Element,data,times,id,filter){
-					var segTree = getIntTree();
-					var rangeTree = getRangeTree();
-					if(id){
-						parseRoutes(data.intervalObj['route_'+id],segTree,rangeTree,filter);
-					}else{
-					 	parseRoutes(data,segTree,rangeTree,filter);	
-					}
-					segTree.buildTree();
-					rangeTree.buildTree();
-					var s = slider(); 
-					if(!isBuilt()){
-						if(times)
-							s.buildSlider(Element,times.start,times.end);
-						else
-							s.buildSlider(Element,'09:00:00','17:30:00');
-						setBuilt();
-					}
-				},
-				
-			}
-		})();
-
-		function parseRoutes(data,segTree,rangeTree,filter){
-			if(typeof data.intervalObj !== 'undefined'){
-				data = data.intervalObj;
-				var routes = Object.keys(data);
-					routes.forEach(function(route){
-						parseTrips(data[route],segTree,rangeTree,filter);
-					})
-			}else{
-				parseTrips(data,segTree,rangeTree,filter);
-			}
-
-		}
-
-		function parseTrips(trips,segTree,rangeTree,filter){
-			Object.keys(trips).forEach(function(trip){
-				trips[trip].forEach(function(interval){
-					var start = timeToInt(interval.start);
-					var end = timeToInt(interval.stop);
-					var intervalObj;
-					if(start < end){
-						intervalObj = {name:trip,interval:interval}
-						segTree.pushInterval(start,end,intervalObj);
-					}
-				})
-				var begin = timeToInt(trips[trip][0].start);
-				var end = timeToInt(trips[trip][trips[trip].length-1].stop);
-				if(begin < end){
-					rangeTree.pushInterval(begin,end,trip);
-				}
-			})
-		}
-
-		function parseRouteData(data,segTree,rangeTree,filter){
-			if(typeof data.intervalObj !== 'undefined'){
-				data = data.intervalObj;
-				var routes = Object.keys(data);
-					routes.forEach(function(route){
-						parseTripData(data[route].trips,segTree,rangeTree,filter);
-					})
-			}else{
-				parseTripData(data.trips,segTree,rangeTree,filter);
-			}
-
-		}
-		function parseTripData(trips,segTree,rangeTree,filter){
-			var keys = Object.keys(trips);
-			keys.forEach(function(trip){
-					if(!filter || filter.indexOf(trip) >= 0){
-						trips[trip].intervals.forEach(function(interval){
-							var start = timeToInt(interval.start);
-							var end = timeToInt(interval.stop);
-							if(start<end){
-								intervalObj = {name:trip,interval:interval};
-								segTree.pushInterval(start,end,intervalObj);
-							}
-						})
-						var begin = timeToInt(trips[trip].range.begin);
-						var end = timeToInt(trips[trip].range.end);
-						if(begin < end){
-							rangeTree.pushInterval(begin,end,trip);
-						}
-					}
-				})
-		}
-
-		function getTripRanges(routeIntervals){
-			var keys = Object.keys(routeIntervals);
-			var ranges = {}
-			keys.forEach(function(id){
-				var currentRoute = routeIntervals[id];
-				tripKeys = Object.keys(currentRoute);
-				tripKeys.forEach(function(k) {
-					ranges[k] = currentRoute[k].range;	
-				})
-				 
-			})
-			return ranges;
-		}
-
-		var TimeObj = function(){
-				this.start_id='';
-				this.stop_id = '';
-				this.start='';
-				this.stop = '';
-				this.lineID = '';
-				this.lineClass='';
-			}
-
-		var intervalStructure = {
-			intervalObj:{},
-		// 	addIntervals:function (tripData,RouteData,route_id){
-		// 		this.intervalObj[route_id] = getAllRouteIntervals(tripData,RouteData,route_id)();
-		// 	},
-
-			getIntervals:function(){
-				return this.intervalObj;
-			}
-		}
-
-		return {tripSetter:tripSetter}
-})();
-if(typeof module !== 'undefined')
-	module.exports = mover;
-},{"./segment-tree-browser":11}],9:[function(require,module,exports){
-
-var pathPlotter = (function(){
-
-	var plotNewRoute = function plotNewRoute(route,path,plotId){
-		var plot = d3.select("#"+plotId);
-		var paths = plot.selectAll("#"+plotId+" path#route_"+route.properties.route_id);
-
-		var features = [];
-		var len = route.stations.length;
-		for(var i = 0; i< len; i++){
-			var	startStop = route.stations[i];
-			var line = route.geometry.coordinates[i];
-			features.push({type:'Feature',geometry:{coordinates:line,type:'LineString'},properties:{start:startStop[0],end:startStop[1]}});
-		}
-
-		paths.data(features)
-				.enter().append("path")
-				.attr("class",function(d){return "route_"+route.properties.route_id;})
-				.attr("id",function(d,i){ 
-					str = "_s_"
-					+nparse(d.properties.start.properties.stop_ids[0])+"_e_"+nparse(d.properties.end.properties.stop_ids[0]);
-				return str;
-				
-				})
-
-
-				.style("stroke",function(d){var color = route.properties.route_color; if(color){return '#'+color;} return '#000' })
-				.style('fill','none')
-				.style('stroke-width','1pt')
-				.on('mouseover',function(d){
-					d3.select(this).style({'stroke-width':'16pt',opacity:'0.6'})
-				})
-				.on('mouseout',function(d){
-					d3.select(this).style({'stroke-width':'1pt',opacity:'0.6'})
-				})
-				.attr("d",path); 			
-	}
-
-	var plotter = function plotter(id,generator,settings){
-		var routeSegments = generator(id);
-		if(routeSegments.geometry.coordinates.length >0){
-			if(typeof settings.path !== 'undefined'){
-				plotNewRoute(routeSegments,settings.path,settings.plotId);
-			}else{
-				plotObj = plotCalcs(settings.data,settings.plotId,settings.scaleFactor);
-				plotNewRoute(routeSegments,plotObj.path,settings.plotId);
-
-			}
-		}
-		return routeSegments;
-	}
-
-	var checkSettings = function(settings){
-		if(typeof settings === 'undefined' ||  (typeof settings.path === 'undefined' && typeof settings.data.transform === 'undefined') ){
-			throw {
-					name:'UsageError',
-					message: 'need existing plot settings or data defined transform and bounding box'
-				};
-		}
-	}
-
-	var plotSegments = function(segData,plotId,scaleFactor,RouteId){
-		var path,plotObj;
-		if(RouteId){
-			segData.features.forEach(function(d,i){
-				if(d.properties.route_id === RouteId){
-					plotObj = plotCalcs(segData,plotId,scaleFactor,segData.features[i]);
-					path = plotObj.path;
-					plotNewRoute(d,path,plotId);
-				}
-			});
-			
-		}else{
-			plotObj = plotCalcs(segData,plotId,scaleFactor);
-		
-			path = plotObj.path;
-			segData.features.forEach(function(route){
-				if(segData.features.length > 0 && !RouteId)
-					plotNewRoute(route,path,plotId);
-				else
-					console.log('Empty Route')
-			});
-		}
-	}
-
-	var plotPathedRoutes = function plotPathedRoutes(routes,stops,settings,routeId){
-		var generator = pather.nrGen(routes,stops);
-		checkSettings(settings);
-		if(!settings.path){
-			settings.path = plotCalcs(settings.data,settings.plotId,settings.scaleFactor).path;
-		}
-		routes.forEach(function(route){
-			if(route.geometry.coordinates.length > 0){
-				if(routeId){
-					if(routeId === route.properties.route_id){
-						plotter(route.properties.route_id,generator,settings);	
-					}
-				}else{
-					plotter(route.properties.route_id,generator,settings);
-				}
-			}
-		})
-	};
-	var plotCalcs = function(Data,plotId,scaleFactor,feature){
-		var W_height=window.outerHeight,
-		W_width=window.outerWidth;
-		var group = d3.select('#'+plotId);
-		var exists = group.node() !== null;
-		
-		var bbox = Data.bbox;
-		var scale = .95/ Math.max( (bbox[3] - bbox[1])/W_width, (bbox[2] - bbox[0])/W_height  );
-		
-		var projection = d3.geo.mercator()
-	            .center(Data.transform.translate)
-	            .scale(scaleFactor*scale)
-	            
-	    var path = d3.geo.path().projection(projection);
-		if(!exists){
-			var Element = d3.select('body').append('div');
-		    var x1,x2,y1,y2,bounds;
-		    var bounds;
-		    if(feature){
-		    	bounds = path.bounds(feature);
-		    }else{
-		    	bounds = path.bounds(Data);
-		    }
-		    /*Here we want to resize the image of the paths to fit the svg
-		    /*get the bounds of the figure*/
-		    x1 = bounds[0][0], x2 = bounds[1][0],y1 = bounds[0][1], y2 = bounds[1][1];
-		    /*set the frame of the svg to fit the size of our figure*/
-		    var height = y2-y1;
-		    var width = x2-x1;
-			var svg = Element.append("svg")
-						.attr("height",height+0.1*height)
-						.attr("width", width + 0.1*width)
-						.style("float","left");
-			group = svg.append("g").attr("id",plotId);
-			group.attr("transform",function(){return "translate("+(0-x1+0.05*width)+","+(0-y1+0.05*height)+")";  });
-		}
-		return {group:group, path:path, projection:projection};
-	}
-
-	
-	return {plotPaths:plotPathedRoutes,plotSegs:plotSegments};
-
-})()
-
-if(typeof module !== 'undefined')
-	module.exports = pathPlotter;
-},{}],10:[function(require,module,exports){
-var display = function(point){
-	group = d3.select('#plot')
-	datum = {type:'Feature',geometry:{coordinates:point,type:'Point'},properties:{id:point.toString()}}
-	group.selectAll(".test").data(datum)
-	.append('circle')
-	.attr('class','test')
-	.attr("transform",function(d){
-		return "translate("+projection(d.geometry.coordinates)+")"
-	})
-	.attr("r",function(d){
-		if(d.properties.stop_id.indexOf('j') <0)
-			return 3;
-		else 
-			return 0
-	})
-	.style("fill","white")
-	.style("stroke","black");
-}
-var plotMod = function(Element){
-	var Gpath,Gprojection;
-	var HOST = "http://localhost:1337"
-	var W_height=window.outerHeight,
-		W_width=window.outerWidth;
-	
-	var plotCalcs = function(Data,plotId,scaleFactor,feature){
-		var group = d3.select('#'+plotId);
-		var exists = group.node() !== null;
-		var bbox = Data.bbox;
-		var scale = .95/ Math.max( (bbox[3] - bbox[1])/W_width, (bbox[2] - bbox[0])/W_height  );
-		var projection 
-		if(!Gprojection)
-			Gprojection = d3.geo.mercator()
-	            .center(Data.transform.translate)
-	            .scale(scaleFactor*scale)
-	    projection = Gprojection
-	    var path 
-	    if(!Gpath)
-	    	Gpath = d3.geo.path().projection(projection);
-	    path = Gpath;
-		if(!exists){
-		    var x1,x2,y1,y2,bounds;
-		    if(feature){
-		    	bounds = path.bounds(feature);
-		    }else{
-		     	bounds = path.bounds(Data);
-		    }
-		    /*Here we want to resize the image of the paths to fit the svg
-		    /*get the bounds of the figure*/
-		    x1 = bounds[0][0], x2 = bounds[1][0],y1 = bounds[0][1], y2 = bounds[1][1];
-		    /*set the frame of the svg to fit the size of our figure*/
-		    var height = y2-y1;
-		    var width = x2-x1;
-			var svg = Element.append("svg")
-						.attr("height",height+0.1*height)
-						.attr("width", width + 0.1*width)
-						.style("float","left");
-			group = svg.append("g").attr("id",plotId);
-			group.attr("transform",function(){return "translate("+(0-x1+0.05*width)+","+(0-y1+0.05*height)+")";  });
-		}
-		return {group:group, path:path, projection:projection};
-	}
-
-	var plotShape = function(shapeList,plotId,shapeId,type){
-		var obj = {
-			type:'Feature',
-			geometry:{coordinates:shapeList,type:type},
-			properties:{route_id:shapeId,route_color:'#444'}
-		};
-		var paths = d3.select('#'+plotId)
-		.append('path')
-		.attr('id',shapeId)
-		.style("stroke",'#444')
-		.style('fill','none')
-		.style('stroke-width','2pt')
-		.attr("d",Gpath(obj));
-	}
-
-	var plotRoutes = function plotRoutes(RouteData,plotId,scaleFactor,RouteId){
-		var id, plotObj;
-		if(RouteId){
-			RouteData.features.forEach(function(d,i){
-
-				if(d.properties.route_id === RouteId)
-					id = i;
-			});
-			plotObj = plotCalcs(RouteData,plotId,scaleFactor,RouteData.features[id]);
-		}else{
-			plotObj = plotCalcs(RouteData,plotId,scaleFactor);
-		}
-		
-		var path = plotObj.path;
-		var projection = plotObj.projection;
-		var group = plotObj.group;
-		
-		var paths = group.selectAll("path").data(RouteData.features.filter(function(d){if(RouteId){return d.properties.route_id === RouteId} return true}))
-					.enter().append("path")
-					.attr("id",function(d){return "route_"+d.properties.route_id;})
-					.style("stroke",function(d){if(d.properties.route_color){return "#"+d.properties.route_color;}return '#000'})
-					.style('fill','none')
-					.style('stroke-width','1pt')
-					paths.attr("d",path); 
-		return plotObj;
-	 
-	}
-
-	
-
-
-
-	var plotStops = function plotStops(StopData,plotId,scaleFactor,junctions,RouteID){
-		// var stops = topojson.feature(StopData,StopData.objects.stops);
-		// stops.bbox = StopData.bbox;
-		// stops.transform = StopData.transform;
-		var stops = StopData;
-		if(junctions){
-			for (var i =0; i< junctions.length; i++){
-				var junc = junctions[i].geometry.coordinates;
-				var exists = false;
-				stops.features.forEach(function(d,i){
-					if (distance(d.geometry.coordinates,junc) === 0){
-						exists = true;
-					} 
-				})
-				if (!exists){
-					stops.features.push(junctions[i]);
-				}
-			}		
-		}
-		var subset;
-		if(RouteID){
-			subset={type:"Feature",geometry:{coordinates:[],type:'LineString'}};
-			StopData.features.forEach(function(stop,i){
-				if(stop.properties.routes.indexOf(RouteID) >=0)
-					subset.geometry.coordinates.push(stop.geometry.coordinates);
-			});
-			
-		}else{
-			subset = undefined;
-		}
-		var plotObj = plotCalcs(stops,plotId,scaleFactor,subset);
-		var group = plotObj.group;
-		var projection = plotObj.projection;
-		
-		var tip = d3.tip()
-					.attr("class",'station')
-					.style({
-							  'line-height': '1',
-							  'font-weight': 'bold',
-							  'padding': '12px',
-							  'background': 'rgba(0, 0, 0, 0.8)',
-							  'color': '#fff',
-							  'border-radius': '2px'
-							})
-					.offset([-10,0])
-					.html(function(d){
-						return "<strong>Station: </strong><span style='color:red'>" +d.properties.stop_id+d.properties.stop_name+"<br/>"+d.geometry.coordinates.toString()+"</span>";
-					})
-
-		group.selectAll(".stationLabel")
-						.data(stops.features.filter(function(d){if (RouteID){ var match = false; d.properties.routes.forEach(function(d){ if(d === RouteID) match = true;}); return match} return true}))
-						.enter().append("circle")
-						.attr("class",function(d){
-							var everyStation = " stationLabel";
-							var classes ="";
-							for(i in d.properties.routes)
-								classes += " route_"+d.properties.routes[i];
-							classes += everyStation;
-							return classes
-						})
-						.attr("id",function(d){return "station_"+d.properties.stop_id;})
-						.attr("transform",function(d){
-							return "translate("+projection(d.geometry.coordinates)+")"
-						})
-						.attr("r",function(d){
-							if(d.properties.stop_id.indexOf('j') <0)
-								return 3;
-							else 
-								return 0
-						})
-						.style("fill","white")
-						.style("stroke","black");
-
-		group.call(tip);
-
-			d3.selectAll(".stationLabel")
-						.on("mouseover",function(d){
-							tip.show(d);
-							console.log(d.geometry.coordinates);
-						})
-						.on("mouseout",tip.hide)
-				
-		return plotObj;
-	};
-	return {plotRoutes:plotRoutes,plotStops:plotStops,plotShape:plotShape};
-
-	function getTripData(Route_ID,Day,AgencyID,Element){
-		var tripURL = /*'temp.json'//*/HOST+"/agency/"+AgencyID+"/day/"+Day+"/routeData?routeId=A";
-		d3.json(tripURL,function(err,data){
-			if(err) console.log(err);
-			var intervals = data;
-			tripSetter.setTrip(Route_ID,'tripData',Element,'froute',intervals);
-		})
-	}
-
-
-
-	function distance(a,b){
-		return Math.sqrt( ( a[0] - b[0] ) * ( a[0] - b[0] ) + ( a[1] - b[1] ) * ( a[1] - b[1] ) );
-	}
+var Stop = function(stop){
+	if(stop)
+		this.stop = stop;
+	else
+		this.stop = {type:'Feature',properties:{},geometry:{type:'Point',coordinates:[]}}
 };
+Stop.prototype.getProperty = function(pname){
+	return this.stop.properties[pname];
+}
+Stop.prototype.getPoint = function(){
+	return this.stop.geometry.coordinates;
+}
+Stop.prototype.getLon = function(){
+	return this.stop.geometry.coordinates[0];
+}
+Stop.prototype.getLat = function(){
+	return this.stop.geometry.coordinates[1];
+}
+Stop.prototype.getId = function(){
+	return this.stop.properties.stop_id;
+}
+Stop.prototype.getName = function(){
+	return this.stop.properties.stop_name;
+}
+Stop.prototype.getGeoFeat = function(){
+	return this.stop.geometry;
+}
+Stop.prototype.getRoutes = function(){
+	return this.stop.properties.routes;
+}
+Stop.prototype.getTrips = function(){
+	return this.stop.properties.groups;
+}
+Stop.prototype.getFeature = function(){
+	return this.stop;
+}
+Stop.prototype.setPoint = function(lonlat){
+	this.stop.geometry.coordinates = lonlat;
+}
+Stop.prototype.setLon = function(lon){
+	this.stop.geometry.coordinates[0] = lon;
+}
+Stop.prototype.setLat = function(lat){
+	this.stop.geometry.coordinates[1] = lat;
+}
+Stop.prototype.setId = function(id){
+	this.stop.properties.stop_id = id; 
+}
+Stop.prototype.setName = function(name){
+	this.stop.properties.stop_name = id;
+}
+Stop.prototype.setRoutes = function(routes){
+	this.stop.properties.routes = routes;
+}
+Stop.prototype.setTrips = function(groups){
+	this.stop.properties.groups = groups;
+}
+Stop.prototype.addRoute = function(route){
+	if(!this.stop.properties.routes)
+		this.stop.properties.routes = [];
+	this.stop.properties.routes.push(route);
+}
+Stop.prototype.addTrip = function(group){
+	if(!this.stop.properties.groups)
+		this.stop.properties.groups = [];
+	this.stop.properties.groups.push(group);
+}
+Stop.prototype.delRoute = function(route){
+	var routes = this.stop.properties.routes,ix = routes.indexOf(route);
+	if(ix>0)
+		routes.splice(ix,1);
+}
+Stop.prototype.delTrip = function(group){
+	var groups = this.stop.properties.groups, ix = groups.indexOf(group);
+	if(ix>0)
+		groups.splice(ix,1);
+}
+Stop.prototype.hasNoGroups = function(){
+	return this.stop.properties.groups.length === 0;
+}
+Stop.prototype.inGroup = function(gid){
+	return this.stop.properties.groups.indexOf(gid) >= 0;
+}
+Stop.prototype.inRoute = function(rid){
+	return this.stop.properties.routes.indexOf(rid) >= 0;
+}
+Stop.prototype.setEdited = function(){
+	this.stop.edited = true;
+}
+Stop.prototype.setNormal = function(){
+	this.stop.edited = false;
+}
+Stop.prototype.isEdited = function(){
+	return this.stop.edited === true;
+}
+Stop.prototype.setRemoval = function(){
+	return this.stop.properties.removed = true;
+}
+Stop.prototype.wasRemoved = function(){
+	return this.stop.properties.removed;
+}
+Stop.prototype.isNew = function(){
+	return this.stop.isNew;
+}
+Stop.prototype.isDeleted = function(){
+	return this.stop.deleted;
+}
+Stop.prototype.setNew = function(tf){
+	this.stop.isNew = tf;
+}
+Stop.prototype.setDeleted = function(tf){
+	this.stop.deleted = tf;
+}
+Stop.prototype.setSequence = function(id){
+	this.stop.sequence = id;
+}
+Stop.prototype.getSequence = function(){
+	return this.stop.sequence;
+}
 
-if(typeof module !== 'undefined')
-	module.exports = plotMod;
+module.exports = Stop;
+},{}],8:[function(require,module,exports){
+var Stops = function(){
+	this.list = [];
+	this.ids  =	[];
+};
+Stops.prototype.addStop = function(stop){
+	this.ids.push(stop.getId());
+	this.list.push(stop);
+}
+Stops.prototype.delStop = function(id){
+	var ix = this.ids.indexOf(id);
+	this.ids.splice(id,1);
+	this.list.splice(id,1);
+}
+Stops.prototype.getStop = function(id){
+	var ix = this.ids.indexOf(id);
+	return this.list[ix]
+}
+Stops.prototype.getNoAssociates = function(){
+	this.list.filter(function(d){
+		return d.hasNoGroups();
+	})
+}
+Stops.prototype.getStopsByRoute = function(rid){
+	return this.list.filter(function(d){
+		return d.inRoute(rid);
+	});
+}
+Stops.prototype.getStopsByTrip = function(tid){
+	return this.list.filter(function(d){
+		return d.inGroup(tid);
+	});
+}
+Stops.prototype.getSubColl = function(id,method){
+	var subColl = new Stops(),
+	sublist     = method(id);
+	sublist.forEach(function(d){
+		subColl.addStop(d);
+	})
+	return subColl;
+}
+Stops.prototype.getSubCollByRoute = function(rid){
+	return this.getSubColl(rid,this.getStopsByRoute);
+}
+Stops.prototype.getSubCollByTrip =function(tid){
+	return this.getSubColl(tid,this.getStopsByTrip);
+}
+Stops.prototype.hasStop = function(sid){
+	return this.ids.indexOf(sid) >=0;
+}
+Stops.prototype.containsStop = function(stop){
+	return this.ids.index(stop.getId());
+}
+Stops.prototype.deleteStop = function(id){
+	var ix = this.ids.indexOf(id);
+	if(ix >=0){
+		this.ids.splice(ix,1);
+		this.list.splice(ix,1);
+	}
+}
+Stops.prototype.getEdited = function(){
+	return this.list.filter(function(d){
+		return d.isEdited();
+	})
+}
+module.exports=Stops;
+},{}],9:[function(require,module,exports){
+var Trip = function(){
+	this.id = '';
+	this.stops = [];
+	this.route_id = '';
+	this.intervals = [];
+	this.start_times = [];
+	this.stop_times = [];
+	this.trip_ids = [];
+};
+Trip.prototype.getId = function(){
+	return this.id;
+}
+Trip.prototype.getStops = function(){
+	return this.stops;
+}
+Trip.prototype.getRouteId = function(){
+	return this.route_id;
+}
+Trip.prototype.getIntervals = function(){
+	return this.intervals;
+}
+Trip.prototype.getInterval = function(i){
+	return this.intervals[i];
+}
+Trip.prototype.getStartTime = function(i){
+	return this.start_times[i];
+}
+Trip.prototype.getStopTime = function(i){
+	return this.stop_times[i];
+}
+Trip.prototype.getIds =function(){
+	return this.trip_ids;
+}
+Trip.prototype.setIds = function(ids){
+	this.trip_ids = ids;
+}
+Trip.prototype.setId = function(id){
+	this.id = id;
+	this.stops = JSON.parse(id);
+}
+Trip.prototype.setRouteId = function(rid){
+	this.route_id = rid;
+}
+Trip.prototype.addStartTime = function(start){
+	this.start_times.push(start);
+}
+Trip.prototype.addStopTime = function(stop){
+	this.stop_times.push(stop);
+}
+Trip.prototype.addInterval = function(start,stop){
+	this.addStartTime(start);
+	this.addStopTime(stop);
+	this.intervals.push([start,stop]);
+}
+Trip.prototype.setIntervals = function(ints){
+	this.intervals = ints;
+}
+Trip.prototype.setStopTimes = function(stoptimes){
+	this.stop_times = stoptimes;
+}
+Trip.prototype.setStartTimes = function(starttimes){
+	this.start_times = starttimes;
+}
+Trip.prototype.hasStop = function(sid){
+	return this.stops.indexOf(sid) >= 0;
+}
+Trip.prototype.addTripId = function(tid){
+	this.trip_ids.push(tid);
+}
+Trip.prototype.addStop = function(sid,ix){
+	this.stops.splice(ix,0,sid);
+}
+module.exports=Trip;
+},{}],10:[function(require,module,exports){
+var swap = function(point){
+	return [point[1],point[0]];
+}
+var hereApi = function(){
+		var here = {};
+		here.points=[];
+		here.app_id = '&app_id=Bz4ZlbpcifSacIK9v2mq', here.app_code = '&app_code=laXkT6pG_eHHQckETu5AEg'
+		here.baseUrl = 'http://route.cit.api.here.com/routing/7.2/calculateroute.json?'
+		here.mode = '&mode=fastest;car'
+		here.routeAtts= '&routeAttributes=sh'
+		here.addwaypoint = function(point){
+			here.points.push(swap(point));
+		}
+		here.addwaypoints = function(points){
+			points.forEach(function(point){
+				here.addwaypoint(point);
+			})
+		}
+		here.getWayPoint = function(n){
+			var p = here.points[n];
+			return '&waypoint'+n+'=geo!' + p[0]+','+p[1];
+		}
+		here.getWayPoints = function(){
+			var args = '';
+			for(var i = 0; i < here.points.length; i++){
+				args += here.getWayPoint(i);
+			}
+			return args;
+		}
+		here.getUrl = function(){
+			return here.baseUrl + here.app_id + here.app_code + here.getWayPoints() + here.mode + here.routeAtts;
+		}
+
+		here.handleRequest = function(cb){
+			d3.json(here.getUrl(),function(err,data){
+				var retobj = here.parser.handleResponse(data);
+				cb(retobj);
+			})
+		}
+
+		here.parser = {
+			handleResponse: function(resp){
+				//assume that we will take the first route in the response
+				//then for each leg of the route
+				resp = resp.response;
+				resp.route = resp.route[0];
+				var retobj = {};
+				var shape = resp.route.shape;
+				var dataofinterest = resp.route.leg.forEach(function(l){
+					var start = l.start.shapeIndex;
+					var end = l.end.shapeIndex;
+					l.path = shape.slice(start,end+1).map(function(cpairstring){
+						return swap(cpairstring.split(',').map(parseFloat));
+					})
+				});
+				retobj.legs = resp.route.leg;
+				retobj.getPath = function(i){
+					return retobj.legs[i].path;
+				}
+				retobj.getTimeDelta = function(i){
+					return retobj.legs[i].travelTime;
+				}
+				retobj.getAllDeltas = function(){
+					var temp = retobj.legs.map(function(c,i,a){return c.travelTime;});
+					console.log(temp)
+					return temp;
+				}
+				retobj.getTotalTime = function(){
+					return 
+				}
+				return retobj;
+			},
+		};
+		return here;	
+	};
+
+module.exports = hereApi;
+
+// waypoints = [[-73.826164,42.685055 ],
+// [-73.829407,42.682648 ],
+// [-73.830109,42.681023 ],
+// [-73.829788,42.68008 ],
+// [-73.825729,42.677296 ],
+// [-73.823441,42.676544 ],
+// [-73.82048,42.675613 ],
+// [-73.818481,42.674973 ],
+// [-73.816002,42.674168 ],
+// [-73.814041,42.67358 ],
+// [-73.812973,42.673237 ],
+// [-73.80986,42.672241 ],
+// [-73.807114,42.671364 ],
+// [-73.80571,42.670937 ],
+// [-73.803192,42.670109 ],
+// [-73.80201,42.669739 ],
+// [-73.798431,42.668606 ],
+// [-73.795715,42.667744 ],
+// [-73.791641,42.666447 ],
+// [-73.790314,42.666023 ],
+// [-73.788017,42.665298 ],
+// [-73.782532,42.663551 ],
+// [-73.779953,42.66272 ],
+// [-73.777428,42.661926 ],
+// [-73.770943,42.66116 ]];
+// hereApi.addwaypoints(waypoints);
+// console.log(hereApi.getUrl());
 },{}],11:[function(require,module,exports){
-
-
-
-var segmentTree = function() {
-/*
-   * interval-query
-   * Copyright © 2012, Thomas Oberndörfer <toberndo@yarkon.de>
-   * MIT Licensed
-*/
-
-"use strict";  
-  var root = null;
-  
-  var intervals = [];
-  
-  var Interval = function(from, to, inter) {
-    this.id = ++Interval.prototype.id;
-    this.from = from;
-    this.to = to;
-    this.overlap = {};
-    if(typeof inter !== 'undefined'){   //////djv edit;
-	   this.inter = inter;
-    }
-  }
-  
-  Interval.prototype.id = 0;
-  Interval.const = Interval.prototype;
-  Interval.prototype.SUBSET = 1;
-  Interval.prototype.DISJOINT = 2;
-  Interval.prototype.INTERSECT_OR_SUPERSET = 3;
-  
-  Interval.prototype.compareTo = function(other) {
-    if (other.from > this.to || other.to < this.from) return this.DISJOINT;
-    if (other.from <= this.from && other.to >= this.to) return this.SUBSET; 
-    return this.INTERSECT_OR_SUPERSET;
-  }
-  
-  // endpoints of intervals included
-  Interval.prototype.disjointIncl = function(other) {
-    if (other.from > this.to || other.to < this.from) return this.DISJOINT;
-  }
-  
-  // two intervals that share only endpoints are seen as disjoint
-  Interval.prototype.disjointExcl = function(other) {
-    if (other.from >= this.to || other.to <= this.from) return this.DISJOINT;
-  }
-  
-  var Node = function(from, to) {
-    this.left = null;
-    this.right = null;
-    this.segment = new Interval(from, to);
-    this.intervals = [];
-  }
-  
-  var endpointArray = function() {
-    var endpoints = [];
-    endpoints.push(-Infinity);
-    endpoints.push(Infinity);
-    intervals.forEach(function(item) {
-      endpoints.push(item.from);
-      endpoints.push(item.to);
-    });
-    return sortAndDeDup(endpoints, function(a, b) {
-      return (a - b);
-    });
-  }
-  
-  var sortAndDeDup = function(unordered, compFn) {
-    var result = [];
-    var prev;
-    unordered.sort(compFn).forEach(function(item) {
-      var equal = (compFn !== undefined && prev !== undefined) ? compFn(prev, item) === 0 : prev === item; 
-      if (!equal) {
-        result.push(item);
-        prev = item;
-      }
-    });
-    return result;
-  }
-  
-  var insertElements = function(pointArray) {
-    var node;
-    if (pointArray.length === 2) {
-      node = new Node(pointArray[0], pointArray[1]);
-      if (pointArray[1] !== Infinity) {
-        node.left = new Node(pointArray[0], pointArray[1]);
-        node.right = new Node(pointArray[1], pointArray[1]);
-      }
-    } else {
-      node = new Node(pointArray[0], pointArray[pointArray.length - 1]);
-      // split array in two halfs
-      var center = Math.floor(pointArray.length / 2);
-      node.left = insertElements(pointArray.slice(0, center + 1));
-      node.right = insertElements(pointArray.slice(center));
-    }
-    return node;
-  }
-  
-  var insertInterval = function(node, interval) {
-    switch(node.segment.compareTo(interval)) {
-      case Interval.const.SUBSET:
-        // interval of node is a subset of the specified interval or equal
-        node.intervals.push(interval);
-        break;
-      case Interval.const.INTERSECT_OR_SUPERSET:
-        // interval of node is a superset, have to look in both childs
-        if (node.left) insertInterval(node.left, interval);
-        if (node.right) insertInterval(node.right, interval);
-        break;
-      case Interval.const.DISJOINT:
-        // nothing to do
-        break;
-    }
-  }
-  
-  var traverseTree = function(node, enterFn, leaveFn) {
-    if (node === null) return;
-    // callback when enter node
-    if (enterFn !== undefined) enterFn(node);
-    traverseTree(node.right, enterFn, leaveFn);
-    traverseTree(node.left, enterFn, leaveFn);
-    // callback before leave
-    if (leaveFn !== undefined) leaveFn(node);
-  }
-  
-  var tree2Array = function(node, level, array) {
-    if (node === null) return;
-    if (level === undefined) level = -1;
-    if (array === undefined) array = [];
-    level++;
-    if (!array[level]) array[level] = [];
-    array[level].push(node);
-    tree2Array(node.right, level, array);
-    tree2Array(node.left, level, array);
-    return array;
-  }
-  
-  var _query = function(node, queryIntervals, hits, disjointFn) {
-    if (node === null) return;
-    queryIntervals.forEach(function(queryInterval) {
-      if (disjointFn.call(node.segment, queryInterval) !== Interval.const.DISJOINT) {
-        node.intervals.forEach(function(interval) {
-          hits[interval.id] = interval;
-        });
-        _query(node.right, queryIntervals, hits, disjointFn);
-        _query(node.left, queryIntervals, hits, disjointFn);
-      }
-    });
-  }
-  
-  var _queryInterval = function(intervalArray, resultFn, disjointFn) {
-    var hits = {};
-    if (disjointFn === undefined) disjointFn = Interval.prototype.disjointIncl;
-    _query(root, intervalArray, hits, disjointFn);
-    var intervalArray = Object.keys(hits).map(function(key) {
-      return hits[key];
-    });
-    if (resultFn !== undefined && typeof resultFn === 'function') resultFn(intervalArray);
-    return intervalArray.length;
-  }
-  
-  var _exchangeOverlap = function(intervals, superiorIntervals) {
-    for(var i = 0; i < superiorIntervals.length; i++) {
-      var superiorInterval = superiorIntervals[i];
-      for(var j = 0; j < intervals.length; j++) {
-        intervals[j].overlap[superiorInterval.id] = superiorInterval;
-        superiorInterval.overlap[intervals[j].id] = intervals[j]; 
-      }
-    }
-    // intervals of node overlap with each other
-    for(var i = 0; i < intervals.length; i++) {
-      for(var j = i + 1; j < intervals.length; j++) {
-        intervals[i].overlap[intervals[j].id] = intervals[j];
-        intervals[j].overlap[intervals[i].id] = intervals[i]; 
-      }
-    }
-  }
-  
-  var _queryOverlap = function(node, topOverlap) {
-    if (node === null) return;
-    var localTopOvrlp;
-    // exchange overlaps: all intervals of a node overlap with intervals of superior nodes and vice versa
-    if (node.intervals.length !== 0) {
-      _exchangeOverlap(node.intervals, topOverlap);
-      // create topOverlap array with new intervals from node
-      localTopOvrlp = topOverlap.concat(node.intervals);
-    } else {
-      localTopOvrlp = topOverlap;
-    }
-    _queryOverlap(node.left, localTopOvrlp); 
-    _queryOverlap(node.right, localTopOvrlp); 
-  }
-  
-    var validateInterval = function(from, to) {
-    if (typeof from !== 'number' || typeof to !== 'number') throw {
-        name: 'InvalidInterval',
-        message: 'endpoints of interval must be of type number'
-    };
-    if (from > to) throw {
-        name: 'InvalidInterval',
-        message: '(' + from + ',' + to + ')' + ' a > b'
-    };
-  }
-  
-  var validateIntervalArray = function(from, to) {
-    if (!(from instanceof Array && to instanceof Array)) throw {
-        name: 'InvalidParameter',
-        message: 'function pushArray: parameters must be arrays'
-    };
-    if (from.length !== to.length) throw {
-        name: 'InvalidParameter',
-        message: 'function pushArray: arrays must have same length'
-    };
-    for(var i = 0; i < from.length; i++) {
-      validateInterval(from[i], to[i]);
-    }
-  }
-  
-  var validatePoint = function(point) {
-    if (typeof point !== 'number') throw {
-        name: 'InvalidParameter',
-        message: 'parameter must be a number'
-    };
-  }
-  
-  var validatePointArray = function(points) {
-    if (!(points instanceof Array)) throw {
-        name: 'InvalidParameter',
-        message: 'parameter must be an array'
-    };
-    for(var i = 0; i < points.length; i++) {
-      if (typeof points[i] !== 'number') throw {
-        name: 'InvalidParameter',
-        message: 'array must consist only of numbers'
-      }
-    }
-  }
-  
-  return {
-    pushInterval: function(from, to, inter) {
-      validateInterval(from, to);			///djv edit
-      intervals.push(new Interval(from, to, inter));
-    },
-    pushArray: function(from, to, validate) {
-      var val = (validate !== undefined) ? validate : true;
-      if (val) validateIntervalArray(from, to);
-      for(var i = 0; i < from.length; i++) {
-        intervals.push(new Interval(from[i], to[i]));
-      }
-    },
-    clearIntervalStack: function() {
-      intervals.length = 0;
-      Interval.prototype.id = 0;
-    },
-    buildTree: function() {
-      if (intervals.length === 0) throw { name: 'BuildTreeError', message: 'interval stack is empty' };
-      root = insertElements(endpointArray());
-      intervals.forEach(function(item) {
-        insertInterval(root, item);
-      });
-    },
-    printTree: function() {
-      traverseTree(root, function(node) {
-        console.log('\nSegment: (%d,%d)', node.segment.from, node.segment.to);
-        node.intervals.forEach(function(item, pos) {
-          console.log('Interval %d: (%d,%d)', pos, item.from, item.to);
-        });
-      });
-    },
-    printTreeTopDown: function() {
-      tree2Array(root).forEach(function(item, pos) {
-        console.log('Level %d:', pos);
-        item.forEach(function(item, pos) {
-          console.log('Segment %d: (%d,%d)', pos, item.segment.from, item.segment.to);
-          item.intervals.forEach(function(item, pos) {
-            console.log('  Interval %d: (%d,%d)', pos, item.from, item.to);
-          });
-        });
-      });
-    },
-    queryPoint: function(point, resultFn) {
-      validatePoint(point);
-      return this.queryPointArray([point], resultFn);
-    },
-    queryPointArray: function(points, resultFn, validate) {
-      var val = (validate !== undefined) ? validate : true;
-      if (val) validatePointArray(points);
-      var intervalArray = points.map(function(item) {
-        return new Interval(item, item);
-      });
-      return _queryInterval(intervalArray, resultFn);
-    },
-    // options: endpoints, resultFn
-    queryInterval: function(from, to, options) {
-      validateInterval(from, to);
-      return this.queryIntervalArray([from], [to], options);
-    },
-    // options: endpoints, resultFn, validate
-    queryIntervalArray: function(from, to, options) {
-      var intervalArray = [];
-      var val = (options !== undefined && options.validate !== undefined) ? options.validate : true;
-      var resFn = (options !== undefined && options.resultFn !== undefined) ? options.resultFn : undefined;
-      var disjointFn = (options !== undefined && options.endpoints === false) ? Interval.prototype.disjointExcl : Interval.prototype.disjointIncl;
-      if (val) validateIntervalArray(from, to);
-      for(var i = 0; i < from.length; i++) {
-        intervalArray.push(new Interval(from[i], to[i]));
-      }
-      return _queryInterval(intervalArray, resFn, disjointFn);
-    },
-    queryOverlap: function() {
-      _queryOverlap(root, []);
-      var result = [];
-      intervals.forEach(function(interval) {
-        var copy = new Interval();
-        copy.id = interval.id;
-        copy.from = interval.from;
-        copy.to = interval.to
-        copy.overlap = Object.keys(interval.overlap);
-        result.push(copy);
-      });
-      return result;
-    }
-  }
-}
-
-if(module && module.exports){
-  module.exports = segmentTree;
-}
-},{}],12:[function(require,module,exports){
 L = require('./bower_components/leaflet/dist/leaflet');
-require('./node_modules/leaflet-path-drag/dist/L.Path.Drag');
+// require('./node_modules/leaflet-path-drag/dist/L.Path.Drag');
 require('./node_modules/leaflet-geometryutil/dist/leaflet.geometryutil');
 // require('./Leaflet.Snap/leaflet.snap');
 var update = require('./update');
@@ -3898,7 +881,11 @@ var Lext = (function(L){
     className:'divMarker',
     iconSize:[10,10],
   });
+  var saver;
 	var layers = {};
+  var setSaver = function(saveObj){
+    saver = saveObj;
+  }
 	var getStopLayer = function(){
     return layers['stops'];
   }
@@ -3970,11 +957,13 @@ var Lext = (function(L){
                   obj.feature.geometry.coordinates[0] = obj._latlng.lng;
                   obj.feature.geometry.coordinates[1] = obj._latlng.lat;
                   update.update(obj.feature);
+                  saver.attr('disabled',null);
                })
                obj.on('dblclick',function(){
                    map.removeLayer(layers.paths);
                    update.deletePoint(obj.feature);
                    update.update();
+                   saver.attr('disabled',null);
                })
                return obj;
 			    },
@@ -3989,7 +978,6 @@ var Lext = (function(L){
           var marker = e.layer; //This makes the reasonable assumption that the only layers to be added to this layer group will be markers
           var stopPoint = marker._latlng;
           var coors = [stopPoint.lng,stopPoint.lat];
-
           var buildFeat = function(id){
             var feature = {type:'Feature',geometry:{type:'Point',coordinates:coors},properties:{stop_id:id}};
             return feature;
@@ -3998,6 +986,7 @@ var Lext = (function(L){
           if(id != undefined){
             map.removeLayer(layers.paths);
             update.update();  
+            saver.attr('disabled',null);  //allow for saving of the data once a stop is added.
           }else{
             layers.stops.removeLayer(marker);
           }
@@ -4007,6 +996,7 @@ var Lext = (function(L){
 	}
   
 	return {
+    setSaver:setSaver,
     addroutes:addroutes,
     addroutesBack:addroutesBack,
     addstops:addstops, 
@@ -4021,7 +1011,7 @@ module.exports = {extension:Lext , L:L};
 
 
 
-},{"./bower_components/leaflet/dist/leaflet":2,"./node_modules/leaflet-geometryutil/dist/leaflet.geometryutil":14,"./node_modules/leaflet-path-drag/dist/L.Path.Drag":15,"./update":19}],13:[function(require,module,exports){
+},{"./bower_components/leaflet/dist/leaflet":2,"./node_modules/leaflet-geometryutil/dist/leaflet.geometryutil":13,"./update":18}],12:[function(require,module,exports){
 
 var dist2 = function(x1,y1,x2,y2){
     return (x1-x2)*(x1-x2) + (y1-y2)*(y1-y2);
@@ -4287,7 +1277,7 @@ var miniGraph = function(){
 
 module.exports = miniGraph
 
-},{}],14:[function(require,module,exports){
+},{}],13:[function(require,module,exports){
 // Packaging/modules magic dance.
 (function (factory) {
     var L;
@@ -4794,9 +1784,7 @@ return L.GeometryUtil;
 
 }));
 
-},{"leaflet":16}],15:[function(require,module,exports){
-"use strict";if(L.Browser.svg){L.Path.include({_resetTransform:function(){this._container.setAttributeNS(null,"transform","")},_applyTransform:function(t){this._container.setAttributeNS(null,"transform","matrix("+t.join(" ")+")")}})}else{L.Path.include({_resetTransform:function(){if(this._skew){this._skew.on=false;this._container.removeChild(this._skew);this._skew=null}},_applyTransform:function(t){var i=this._skew;if(!i){i=this._createElement("skew");this._container.appendChild(i);i.style.behavior="url(#default#VML)";this._skew=i}var a=t[0].toFixed(8)+" "+t[1].toFixed(8)+" "+t[2].toFixed(8)+" "+t[3].toFixed(8)+" 0 0";var n=Math.floor(t[4]).toFixed()+", "+Math.floor(t[5]).toFixed()+"";var r=this._container.style;var o=parseFloat(r.left);var s=parseFloat(r.top);var e=parseFloat(r.width);var h=parseFloat(r.height);if(isNaN(o))o=0;if(isNaN(s))s=0;if(isNaN(e)||!e)e=1;if(isNaN(h)||!h)h=1;var _=(-o/e-.5).toFixed(8)+" "+(-s/h-.5).toFixed(8);i.on="f";i.matrix=a;i.origin=_;i.offset=n;i.on=true}})}L.Path.include({_onMouseClick:function(t){if(this.dragging&&this.dragging.moved()||this._map.dragging&&this._map.dragging.moved()){return}this._fireMouseEvent(t)}});"use strict";L.Handler.PathDrag=L.Handler.extend({initialize:function(t){this._path=t;this._matrix=null;this._startPoint=null;this._dragStartPoint=null},addHooks:function(){this._path.on("mousedown",this._onDragStart,this);L.DomUtil.addClass(this._path._container,"leaflet-path-draggable")},removeHooks:function(){this._path.off("mousedown",this._onDragStart,this);L.DomUtil.removeClass(this._path._container,"leaflet-path-draggable")},moved:function(){return this._path._dragMoved},_onDragStart:function(t){this._startPoint=t.containerPoint.clone();this._dragStartPoint=t.containerPoint.clone();this._matrix=[1,0,0,1,0,0];this._path._map.on("mousemove",this._onDrag,this).on("mouseup",this._onDragEnd,this);this._path._dragMoved=false},_onDrag:function(t){var i=t.containerPoint.x;var a=t.containerPoint.y;var n=i-this._startPoint.x;var r=a-this._startPoint.y;if(!this._path._dragMoved&&(n||r)){this._path._dragMoved=true;this._path.fire("dragstart")}this._matrix[4]+=n;this._matrix[5]+=r;this._startPoint.x=i;this._startPoint.y=a;this._path._applyTransform(this._matrix);this._path.fire("drag");L.DomEvent.stop(t.originalEvent)},_onDragEnd:function(t){L.DomEvent.stop(t);this._path._resetTransform();this._transformPoints(this._matrix);this._path._map.off("mousemove",this._onDrag,this).off("mouseup",this._onDragEnd,this);this._path.fire("dragend",{distance:Math.sqrt(L.LineUtil._sqDist(this._dragStartPoint,t.containerPoint))});this._matrix=null;this._startPoint=null;this._dragStartPoint=null},_transformPoints:function(t){var i=this._path;var a,n,r;var o=L.point(t[4],t[5]);var s=i._map.options.crs;var e=s.transformation;var h=s.scale(i._map.getZoom());var _=s.projection;var l=e.untransform(o,h).subtract(e.untransform(L.point(0,0),h));if(i._point){i._latlng=_.unproject(_.project(i._latlng)._add(l));i._point._add(o)}else if(i._originalPoints){for(a=0,n=i._originalPoints.length;a<n;a++){r=i._latlngs[a];i._latlngs[a]=_.unproject(_.project(r)._add(l));i._originalPoints[a]._add(o)}}if(i._holes){for(a=0,n=i._holes.length;a<n;a++){for(var g=0,d=i._holes[a].length;g<d;g++){r=i._holes[a][g];i._holes[a][g]=_.unproject(_.project(r)._add(l));i._holePoints[a][g]._add(o)}}}i._updatePath()}});L.Path.prototype.__initEvents=L.Path.prototype._initEvents;L.Path.prototype._initEvents=function(){this.__initEvents();if(this.options.draggable){if(this.dragging){this.dragging.enable()}else{this.dragging=new L.Handler.PathDrag(this);this.dragging.enable()}}else if(this.dragging){this.dragging.disable()}};(function(){L.FeatureGroup.EVENTS+=" dragstart";function t(t,i,a){for(var n=0,r=t.length;n<r;n++){var o=t[n];o.prototype["_"+i]=o.prototype[i];o.prototype[i]=a}}function i(t){if(this.hasLayer(t)){return this}t.on("drag",this._onDrag,this).on("dragend",this._onDragEnd,this);return this._addLayer.call(this,t)}function a(t){if(!this.hasLayer(t)){return this}t.off("drag",this._onDrag,this).off("dragend",this._onDragEnd,this);return this._removeLayer.call(this,t)}t([L.MultiPolygon,L.MultiPolyline],"addLayer",i);t([L.MultiPolygon,L.MultiPolyline],"removeLayer",a);var n={_onDrag:function(t){var i=t.target;this.eachLayer(function(t){if(t!==i){t._applyTransform(i.dragging._matrix)}});this._propagateEvent(t)},_onDragEnd:function(t){var i=t.target;this.eachLayer(function(t){if(t!==i){t._resetTransform();t.dragging._transformPoints(i.dragging._matrix)}});this._propagateEvent(t)}};L.MultiPolygon.include(n);L.MultiPolyline.include(n)})();
-},{}],16:[function(require,module,exports){
+},{"leaflet":14}],14:[function(require,module,exports){
 /*
  Leaflet, a JavaScript library for mobile-friendly interactive maps. http://leafletjs.com
  (c) 2010-2013, Vladimir Agafonkin
@@ -13977,85 +10965,7 @@ L.Map.include({
 
 
 }(window, document));
-},{}],17:[function(require,module,exports){
-var swap = function(point){
-	return [point[1],point[0]];
-}
-
-var decode = function(encoded, precision) {
-			var len = encoded.length,
-			    index=0,
-			    lat=0,
-			    lng = 0,
-			    array = [];
-
-			precision = Math.pow(10, -precision);
-
-			while (index < len) {
-				var b,
-				    shift = 0,
-				    result = 0;
-				do {
-					b = encoded.charCodeAt(index++) - 63;
-					result |= (b & 0x1f) << shift;
-					shift += 5;
-				} while (b >= 0x20);
-				var dlat = ((result & 1) ? ~(result >> 1) : (result >> 1));
-				lat += dlat;
-				shift = 0;
-				result = 0;
-				do {
-					b = encoded.charCodeAt(index++) - 63;
-					result |= (b & 0x1f) << shift;
-					shift += 5;
-				} while (b >= 0x20);
-				var dlng = ((result & 1) ? ~(result >> 1) : (result >> 1));
-				lng += dlng;
-				//array.push( {lat: lat * precision, lng: lng * precision} );
-				array.push( [lat * precision, lng * precision] );
-			}
-			return array;
-		}
-
-var osrmApi = (function(){
-		var osrm = {};
-		// Taken from 
-		// https://github.com/mapzen/routing/blob/gh-pages/js/leaflet_rm/L.Routing.OSRM.js
-		// Adapted from
-		// https://github.com/DennisSchiefer/Project-OSRM-Web/blob/develop/WebContent/routing/OSRM.RoutingGeometry.js
-		
-		osrm.baseUrl = 'http://osrm.mapzen.com/psv/viaroute?'
-		osrm.addwaypoints = function(pointList){
-			var str = '';
-			pointList.forEach(function(point){
-				str += '&loc=' + point[1] + '%2C' + point[0];
-			});
-			this.locs = str;
-		}
-		osrm.addwaypoint = function(p1,p2){
-			this.locs = '&loc='+p1[1]+'%2C'+p1[0];
-			this.locs += '&loc='+p2[1]+'%2C'+p2[0];
-		}
-		osrm.getUrl = function(){
-			return this.baseUrl+this.locs;
-		}
-		osrm.handleRequest= function(callback){				//Function to handle request to the osrm webservers
-			d3.json(osrm.getUrl(),function(err,resp){			//request via d3 json  method
-				if(resp.status_message !== "Found route between points"){	//if given a bad status message, log it and end
-					console.log("Error",resp.status_message)
-					console.log(osrm.getUrl())
-					return;
-				}
-				resp.route_geometry = decode(resp.route_geometry,6).map(swap);	//otherwise decode it's geometry
-				resp.via_points = resp.via_points.map(swap);
-				callback(resp);									//and pass the response object to the callback
-			})		
-		}
-		return osrm;
-	});
-
-	module.exports = osrmApi
-},{}],18:[function(require,module,exports){
+},{}],15:[function(require,module,exports){
 //plotmod
 var bundle = require('./leafletExt');
 L = bundle.L;
@@ -14098,66 +11008,202 @@ var plotter = (function(){
         map.removeLayer(layer);
       })
     }
+    plotmod.setSaver = function(saver){
+      Lext.setSaver(saver);
+    }
 
     return plotmod;
 })();
 
 module.exports = plotter;
 
-},{"./leafletExt":12}],19:[function(require,module,exports){
-var Osrm = require('./osrmapi');
+},{"./leafletExt":11}],16:[function(require,module,exports){
+var Collection = function(){
+	this.coll = [];
+}
+Collection.prototype.contains = function(el){
+	return this.coll.filter(function(d){return d.getId()===el.getId();}).length !==0;
+}
+Collection.prototype.push = function(el){
+	this.coll.push(el);
+}
+Collection.prototype.concat = function(list){
+	var coll = this.coll;
+	list.forEach(function(d){
+		coll.push(d);
+	})
+}
+Collection.prototype.forEach = function(cb){
+	this.coll.forEach(function(e,i,a){
+		cb(e,i,a);
+	})
+}
+Collection.prototype.filter  = function(cb){
+	return this.coll.filter(function(e,i,a){
+		return cb(e,i,a);
+	})
+};
+Collection.prototype.union = function(list){
+	var coll = this;
+	coll.concat(list.filter(function(d){
+			return !coll.contains(d)
+	}))
+}
+Collection.prototype.intersect = function(list){
+	var coll = this;
+	return list.filter(function(d){
+		return coll.contains(d);
+	})
+}
+var SaveObj = function(graph,stopIds,stops,trip_ids,path_id,saveList,deltas){
+	this.graph = graph;
+	this.stops = stopIds;
+	this.sDict = stops;
+	this.trip_ids = trip_ids;
+	this.path_id = path_id;
+	this.saveList = saveList;
+	this.deltas = deltas;
+	this.stopC = new Collection();
+};
+
+SaveObj.prototype.setAddDels = function(){
+	var stopC = this.stopC;
+	this.saveList.forEach(function(rec){
+		var stop = rec.obj.data;
+		stop.setSequence(rec.obj.position); 
+		if(stop.hasNoGroups())
+			stop.setRemoval() //if no group from any route is associated, mark it for database removal.
+		stopC.push(stop);
+	});
+}
+
+SaveObj.prototype.setMovements = function(){
+	var stops = this.stops, stopC = this.stopC, sDict = this.sDict;
+	stopC.union(sDict.getEdited());
+}
+
+SaveObj.prototype.buildReqObj = function(){
+	debugger;
+	this.setAddDels();
+	this.setMovements();
+}
+
+SaveObj.prototype.getReqObj = function(){
+	this.buildReqObj();	
+	return {
+		data:this.stopC.coll,
+		trip_ids:this.trip_ids,
+		deltas:this.deltas,
+	}	
+}
+SaveObj.prototype.markSaved = function(){
+	this.stopC.forEach(function(d){
+		d.setNormal()
+		if(d.isDeleted())
+			d.setDeleted(false);
+		if(d.isNew)
+			d.setNew(false);
+	})
+}
+SaveObj.prototype.getDeleted = function(){
+	return this.stopC.filter(function(d){
+		return d.isDeleted();
+	})
+}
+SaveObj.prototype.getAdded = function(){
+	return this.stopC.filter(function(d){
+		return d.isNew();
+	})
+}
+module.exports=SaveObj;
+},{}],17:[function(require,module,exports){
+var savetracker = function(){
+	this.tracklist = [];
+	this.addEvent = function(etype,dataobj){
+		var inxs = [];
+		this.tracklist.forEach(function(d,i){if(d.obj.id===dataobj.id) inxs.push(i);});
+		if(!inxs.length){
+			this.tracklist.push({obj:dataobj,type:etype});
+		}else if(inxs.length === 1){
+			var obj = this.tracklist[inxs[0]];
+			if(obj.type !== etype){
+				this.tracklist.splice(inxs[0],1); //remove the element that has conflicting event types
+			}//if they are the same type ignore the update
+		}
+	};
+	this.getEventList = function(){
+		return this.tracklist;
+	};
+	this.getLastEvent = function(){
+		return this.tracklist[this.tracklist.length-1];
+	}
+}
+
+module.exports= savetracker;
+
+
+// var st = new savetracker();
+// st.addEvent('d',{id:'0000',data:{}});
+// st.addEvent('i',{id:'0001',data:{}});
+// st.addEvent('d',{id:'0000',data:{}});
+// st.addEvent('i',{id:'0001',data:{}});
+// st.addEvent('d',{id:'0000',data:{}});
+// st.addEvent('i',{id:'0000',data:{}});
+// console.log(st.getEventList());
+},{}],18:[function(require,module,exports){
+var DSource = require('./hereapi');
 var Graph = require('./miniGraph');
-var fb 	=   require('./featurebuilder.js');
+var SaveTracker = require('./savetracker');
+var SaveObj = require('./savemod');
+var Stop 	= require('./gtfsapi/models/stop');
+var range = function(min,max){
+	min = Math.max(min,0);
+	var list = [];
+	for(var i = min; i<= max; i++){
+		list.push(i);
+	}
+	return list;
+}
 var updateObj = (function(){
 	var graph = new Graph(); //graph to maintain the relationships of the current tripRoute with its stops
 	var plotmod;
-	var stops;
-	var sDict;
-
+	var Stops;
+	var notInit;
+	var saveTracker;
+	var deltas;
+	var Trip;
 	var reset = function(){
 		graph = new Graph();
 	}
-
-
-
-	var processAccumulator = function(sDict, data){
+	var processResponse = function(Stops, data){
 		var routeGeo = data;
-		var featColl = fb(sDict,{type:'osrm',object:routeGeo}); //build the feature collection
-		console.log(routeGeo);
 		var emptyGraph = graph.isEmpty();
+		var stops = Trip.getStops();
 		for(var i =0; i< stops.length-1; i++){//Go through the list of stops on our current route
-			//Note that the via_points array in the routeGeo will be the associated with the same indicies;
-			var p1 = routeGeo.via_indices[i];	//index of first stop
-			
-			var p2 = routeGeo.via_indices[i+1];	//index of second stop
-			var point_range = routeGeo.route_geometry.slice(p1,p2+1);
+			var point_range = routeGeo.getPath(i);
+			var data = {type:'Feature',properties:{},geometry:{type:'LineString',coordinates:point_range}}
 			if(emptyGraph)
-				graph.addEdge(stops[i],stops[i+1],{type:'Feature',properties:{},geometry:{type:'LineString',coordinates:point_range}});  
+				graph.addEdge(stops[i],stops[i+1],data);  
 			else
-				graph.updateEdge(stops[i],stops[i+1],{type:'Feature',properties:{},geometry:{type:'LineString',coordinates:point_range}})
+				graph.updateEdge(stops[i],stops[i+1],data)
 		}
-		console.log(graph);
-		// stops.forEach(function(sid,i){
-		// 	sDict[sid].geometry.coordinates = routeGeo.via_points[i];
-		// })
-		displayStops(sDict,stops);
+		deltas = routeGeo.getAllDeltas();
+		displayStops(Stops,Trip);
 		plotmod.plotFeats(graph.toFeatureCollection(),emptyGraph);
 	}
 
-	var requestPath = function(sDict, trajectory){
-		var pathAccumulator ={};			//accumulator object for all the paths to be returned
-		var osrm = new Osrm();				//create new instance of api module
-		console.log(trajectory);
-		osrm.addwaypoints(trajectory);		//add the coordinates as waypoints in the request
-		osrm.handleRequest(function(data){	//request  callback for data from osrm server
-			processAccumulator(sDict,data);
+	var requestPath = function(Stops, trajectory){
+		var dsource = new DSource();				//create new instance of api module
+		dsource.addwaypoints(trajectory);		//add the coordinates as waypoints in the request
+		dsource.handleRequest(function(data){	//request  callback for data from datasource server
+			processResponse(Stops,data);
 		});	
 	}
 
-	var displayStops = function(sDict,stops){
+	var displayStops = function(Stops,Trip){
 		var FeatColl = {type:'FeatureCollection', features:[]};
-		stops.forEach(function(sid){
-			FeatColl.features.push(sDict[sid]);
+		Trip.getStops().forEach(function(sid){
+			FeatColl.features.push(Stops.getStop(sid).getFeature());
 		})
 		plotmod.clearStops();
 		plotmod.plotStops(FeatColl);
@@ -14165,52 +11211,72 @@ var updateObj = (function(){
 
 	//Function  to collect the stop paths traversed by each trip
 	//into a single matrix;
-	var processData = function(sDict, trip){	//get simple psuedo matrix of trip traversals
-		var dataMatrix = {};
-			var ids = JSON.parse(trip.id);	//get the list off stops it traverses in order of arrival
-			stops = ids;
-			var coorVector = [];			
-			ids.forEach(function(id){		//for each stop that it visits
-				coorVector.push(sDict[id].geometry.coordinates);	//push that stop's coordinates into the vector
-			});
+	var getWaypoints = function(Stops,Trip){	//get simple psuedo matrix of trip traversals
+		var coorVector = [];			
+		Trip.getStops().forEach(function(id){		//for each stop that it visits
+			coorVector.push(Stops.getStop(id).getPoint());	//push that stop's coordinates into the vector
+		});
 		return coorVector;
 	}
 
 	//function to kickstart the application
-	var init = function(Dict,sched,plotter,routeData){
-		sDict = Dict;
+	var init = function(Dict,trip,plotter){
+		notInit = false;
+		Stops = Dict;
 		plotmod = plotter;
+		Trip = trip
 		//process schedule data
-		var waypoints = processData(Dict,sched);
-		displayStops(sDict,stops);
-		if(!routeData){	//if there was no route data to begin with just take the trajectory 
-						//and build the route from scratch
-			requestPath(sDict,waypoints);	
-		}else{
-			//siftAndMerge(Dict,sched,routeData,graph);
-			//plotmod.plotFeats(graph.toFeatureCollection,true);
-		}
-		
+		var waypoints = getWaypoints(Stops,Trip);
+		displayStops(Stops,trip);
+		requestPath(Stops,waypoints);	
+		saveTracker = new SaveTracker();
 	}
+
 	var updateMap = function(stopObj){
 		if(stopObj){
-			var stopid = stopObj.properties.stop_id;
-			console.log(stopid);
-			sDict[stopid].geometry.coordinates = stopObj.geometry.coordinates;	
+			var s = new Stop(stopObj);
+			s.setNew(true);
+			s.setEdited();
+			// Stops[stopid].properties.edited = true;
+			debugger;
+			var stop = Stops.getStop(s.getId())	//try to get the stop
+			if( !stop )	//if it isn't there
+				Stops.addStop(s);	//add it
+			else{ //otherwise update the coordinates
+				stop.setPoint(s.getPoint());
+				stop.setEdited();
+				stop.setNew(true);
+			}	
 		}
+		notInit = true;
 		var reqobj = [];
-		stops.forEach(function(sid){
-			reqobj.push(sDict[sid].geometry.coordinates);
+		Trip.getStops().forEach(function(sid){
+			reqobj.push(Stops.getStop(sid).getPoint());
 		})
-		console.log(stops);
-		requestPath(sDict,reqobj);
+		requestPath(Stops,reqobj);
 	}
+
 	var save = function(){
-		return {graph:graph,stops:stops,objects:sDict};
+		// return {graph:,stops:,objects:,ids:,path_id:,changelog:,deltas:};
+		return new SaveObj(graph,
+							Trip.getStops(),
+							Stops,
+							Trip.getIds(),
+							Trip.getId(),
+							saveTracker.getEventList(),
+							deltas);
+	}
+
+	var notify = function(success){
+		if(success){
+			saveTracker = new SaveTracker(); //if a save was successful reset the tracker to the new state.
+		}
 	}
 
 	var addPoint = function(newStop){
 		var qObj,i1,i2,i;
+		var nStop = new Stop(newStop);
+		var stops = Trip.getStops();
 		var id = '';
 		do{
 			if(id !== '')
@@ -14218,21 +11284,29 @@ var updateObj = (function(){
 			id = prompt('Please Enter new stop id');
 			if(id === null)
 				return;
-		}while(sDict[id])//poll until a new ID has been entered
-		newStop.properties.stop_id = id;
-		qObj = graph.queryPoint(newStop.geometry.coordinates);	//find closest edge in the graph
+		}while(Stops.hasStop(id))//poll until a new ID has been entered
+		nStop.setId(id);
+		nStop.setNew(true); //mark that this stop is new
+		nStop.setEdited(true); //mark that it needs to be commited.
+		nStop.addRoute(Trip.getRouteId());
+		nStop.addTrip(Trip.getId());
+		qObj = graph.queryPoint(nStop.getPoint());	//find closest edge in the graph
 		graph.splitEdge(qObj.v1,qObj.v2,newStop,qObj.position);
 		i1 = stops.indexOf(qObj.v1);
 		i2 = stops.indexOf(qObj.v2);
-		i = Math.max(i1,i2);//The assumption is that since they are associated they are right next to eachother in the list;
+		i = Math.max(i1,i2); //The assumption is that since they are associated they are right next to eachother in the list;
 		stops.splice(i,0,id);
-		sDict[id] = newStop;
+	
+		Stops.addStop(nStop); 
+		saveTracker.addEvent('i',{id:id,position:i+1,data:nStop});
 		return id;
 	}
 
 	var deletePoint = function(stopObj){
 		var stopList = [],
-		id = stopObj.properties.stop_id,
+		stops = Trip.getStops(),
+		oStop = new Stop(stopObj),
+		id = oStop.getId(),
 		inx = stops.indexOf(id);
 		if(inx === 0)
 			stopList.push(stops[1]);
@@ -14242,9 +11316,13 @@ var updateObj = (function(){
 			stopList.push(stops[inx-1])
 			stopList.push(stops[inx+1])
 		}
-		stops.splice(inx,1); //remove the element from the stopList
+		victimid = stops.splice(inx,1); //remove the element from the stopList
+		victim = Stops.getStop(victimid[0]);
+		victim.setDeleted(true);
+		victim.setEdited();
+		saveTracker.addEvent('d',{id:id,position:inx+1,data:victim});
 		graph.deleteNode(id,stopList); //remove it's node from the graph
-		delete sDict[id]
+		Stops.deleteStop(id);
 	}
 
 	return {
@@ -14254,38 +11332,69 @@ var updateObj = (function(){
 		save:save,
 		addPoint,addPoint,
 		deletePoint:deletePoint,
+		notify:notify,
 	};
 })();
 
 
 module.exports = updateObj;
-},{"./featurebuilder.js":4,"./miniGraph":13,"./osrmapi":17}],"editor":[function(require,module,exports){
+},{"./gtfsapi/models/stop":7,"./hereapi":10,"./miniGraph":12,"./savemod":16,"./savetracker":17}],"editor":[function(require,module,exports){
+var Stop = require('./gtfsapi/models/stop');
+var Stops =require('./gtfsapi/models/stops');
+var Trip = require('./gtfsapi/models/trip');
+var Route =require('./gtfsapi/models/route').Route;
+var Routes=require('./gtfsapi/models/route').Routes;
+var buildModels = function(sdata,tdata,routes){
+    var SColl = new Stops();
+    sdata.features.forEach(function(d){
+        var s = new Stop(d);
+        SColl.addStop(s);
+    });
+
+    Object.keys(tdata).forEach(function(rid){
+        var R = tdata[rid];
+        var route = new Route(rid);
+        R.trips.forEach(function(t){
+            //Build Trip object from souce data
+            var trip = new Trip();
+            trip.setId(t.id);
+            trip.setIntervals(t.intervals);
+            trip.setStartTimes(t.start_times);
+            trip.setStopTimes(t.stop_times);
+            trip.setIds(t.tripids);
+            //add the trip to the route object
+            route.addTrip(trip);
+            //set the many-to-many relationship 
+            //stops <----> trips, by setting the trips ids of stops
+            trip.getStops().forEach(function(sid){
+                SColl.getStop(sid).addTrip(trip.getId());
+            })
+        })
+        routes.addRoute(route);
+    });
+    return SColl
+}
+
 var startApp = function(){
 	var update = require('./update');
 	var plotmod =require('./plotmod');
-	var livegtfs = require('./gtfsapi/livegtfsapiTemplate');
+	var fetcher = require('./gtfsapi/gtfsdata');
 	var fb = require('./featurebuilder');
 	var databox = require('./databox');
-
-	var agency = 100;	
-	var fetcher = livegtfs.gtfsData; //get datamod for the gtfs api
-    fetcher.getRoutes(agency,function(rdata){ //fetch the raw route data from the server
-    	
+	var agency = 12;
     	fetcher.getStops(agency,{format:'geo'},function(stopData){		//fetch raw stop data
-    		stopDict = {};												//define lookup dictionary for stops
-    		stopData = fuzzyfixer(rdata,stopData);						//perform fuzzy fix to allow for better queries to osrm
-
-    		console.log(stopDict)
     		fetcher.getSchedule(agency,{Day:'Monday'},function(scheds){	//request the schedule data from the server
-    			databox.init(rdata,stopData,scheds);
-    			console.log(scheds);
+            var routes = new Routes();			
+            var stops = buildModels(stopData,scheds,routes);
+                databox.init(stops,routes,agency);
+    			console.log(routes);
+                console.log(stops);
     		})		
     	});
-    });	
 }
 
 module.exports= startApp;
 
 
 
-},{"./databox":3,"./featurebuilder":4,"./gtfsapi/livegtfsapiTemplate":7,"./plotmod":18,"./update":19}]},{},[]);
+},{"./databox":3,"./featurebuilder":4,"./gtfsapi/gtfsdata":5,"./gtfsapi/models/route":6,"./gtfsapi/models/stop":7,"./gtfsapi/models/stops":8,"./gtfsapi/models/trip":9,"./plotmod":15,"./update":18}]},{},[]);
