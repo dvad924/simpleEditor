@@ -15,7 +15,6 @@ var updateObj = (function(){
 	var graph = new Graph(); //graph to maintain the relationships of the current tripRoute with its stops
 	var plotmod;
 	var Stops;
-	var notInit;
 	var saveTracker;
 	var deltas;
 	var Trip;
@@ -68,7 +67,6 @@ var updateObj = (function(){
 
 	//function to kickstart the application
 	var init = function(Dict,trip,plotter){
-		notInit = false;
 		Stops = Dict;
 		plotmod = plotter;
 		Trip = trip
@@ -77,6 +75,35 @@ var updateObj = (function(){
 		displayStops(Stops,trip);
 		requestPath(Stops,waypoints);	
 		saveTracker = new SaveTracker();
+	}
+
+	var create = function(Dict,trip,plotter,route_id){
+		saveTracker = new SaveTracker();
+		Stops = Dict;
+		plotmod = plotter;
+		Trip = trip;
+		plotmod.initializeTrip(function(stopList){
+			var stopids = [];
+			stopList.forEach(function(d,i){
+				id = interact('Please Enter Stop ' + i+1 +'Id',
+								'Error Stop exists',
+								function(id){return Stops.hasStop(id)});
+				d.setId(id);
+				d.addRoute(route_id);
+				Stops.addStop(d);
+				saveTracker.addEvent('i',{id:id,position:i+1,data:d});
+			});
+			stopids = stopList.map(function(d){return d.getId();})
+			trip.setStops(stopids);
+			trip.setRouteId(route_id);
+			stopList.forEach(function(d){
+				d.addTrip(trip.getId());
+			})
+			var waypoints = getWaypoints(Stops,trip);
+			displayStops(Stops,trip);
+			requestPath(Stops,waypoints);
+		});
+
 	}
 
 	var updateMap = function(stopObj){
@@ -95,7 +122,6 @@ var updateObj = (function(){
 				stop.setNew(true);
 			}	
 		}
-		notInit = true;
 		var reqobj = [];
 		Trip.getStops().forEach(function(sid){
 			reqobj.push(Stops.getStop(sid).getPoint());
@@ -111,7 +137,9 @@ var updateObj = (function(){
 							Trip.getIds(),
 							Trip.getId(),
 							saveTracker.getEventList(),
-							deltas);
+							deltas,
+							Trip
+							);
 	}
 
 	var notify = function(success){
@@ -174,6 +202,7 @@ var updateObj = (function(){
 
 	return {
 		update:updateMap,
+		create:create,
 		init:init, 
 		reset:reset, 
 		save:save,

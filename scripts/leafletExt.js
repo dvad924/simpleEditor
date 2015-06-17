@@ -15,8 +15,20 @@ var Lext = (function(L){
   var setSaver = function(saveObj){
     saver = saveObj;
   }
-	var getStopLayer = function(){
+	var getStopLayers = function(){
+    return layers['stops'].getLayers();
+  }
+  var getStopsLayer = function(){
     return layers['stops'];
+  }
+  var purgeStops = function(){
+    if(layers.stops)
+      layers['stops'].clearLayers();
+    layers['stops'] = undefined;
+  }
+  var toggleStopsEvents = function(){
+    if(layers.stops && layers.stops.toggleAdd)
+      layers['stops'].toggleAdd();
   }
   var getPathLayer = function(){
     return layers['paths'];
@@ -59,6 +71,15 @@ var Lext = (function(L){
       map.fitBounds(layers.paths.getBounds());  
     }	
 	}
+  var addStop = function(e,map){
+    var marker = L.marker(e.latlng,{icon:divmarker,draggable:true});
+    if(layers.stops) 
+      layers.stops.addLayer(marker)
+    else{
+       layers.stops=L.layerGroup([marker]);
+       layers.stops.addTo(map);
+    }
+  }
   var addroutesBack = function(rdata,map){
     layers['background'] = L.geoJson(rdata, {
       style:function(feature){
@@ -103,7 +124,8 @@ var Lext = (function(L){
             }); 
           }
 			})
-      layers.stops.on('layeradd',function(e){
+
+      function addLayer(e){
           var marker = e.layer; //This makes the reasonable assumption that the only layers to be added to this layer group will be markers
           var stopPoint = marker._latlng;
           var coors = [stopPoint.lng,stopPoint.lat];
@@ -119,8 +141,14 @@ var Lext = (function(L){
           }else{
             layers.stops.removeLayer(marker);
           }
-          
-      })
+      }
+      layers.stops.on('layeradd',addLayer);
+      layers.stops.toggleAdd = function(){
+        if(layers.stops.hasEventListeners('layeradd'))
+          layers.stops.off('layeradd',addLayer);
+        else
+          layers.stops.on('layeradd',addLayer);
+      }
    		layers.stops.addTo(map);
 	}
   
@@ -129,10 +157,14 @@ var Lext = (function(L){
     addroutes:addroutes,
     addroutesBack:addroutesBack,
     addstops:addstops, 
-    getstoplayer:getStopLayer,
+    addStop:addStop,
+    getstoplayers:getStopLayers,
     getpathlayer:getPathLayer,
     getAllLayers:getAllLayers,
     getFocusLayers:getFocusLayers,
+    getstopslayer: getStopsLayer,
+    toggleStopsEvents:toggleStopsEvents,
+    purgeStops:purgeStops,
   };
 })(L);
 

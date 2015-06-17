@@ -1,5 +1,6 @@
 //plotmod
 var bundle = require('./leafletExt');
+var Stop   = require('./gtfsapi/models/stop')
 L = bundle.L;
 Lext = bundle.extension;
 
@@ -30,15 +31,41 @@ var plotter = (function(){
       })
     }
     plotmod.clearStops = function(){
-      var layer = Lext.getstoplayer();
+      var layer = Lext.getstopslayer();
       if(layer){
          map.removeLayer(layer);
       }
+      Lext.purgeStops();
     }
     plotmod.clear = function(){
+      plotmod.clearStops();
       Lext.getAllLayers().forEach(function(layer){
         map.removeLayer(layer);
       })
+    }
+    plotmod.initializeTrip = function(cb){
+      var count = 0;
+      Lext.toggleStopsEvents();
+      function onClick(e){
+        console.log(e);
+        Lext.addStop(e,map);
+        count++;
+        if(count ===2){
+          var newstops = Lext.getstoplayers().map(function(d){
+            var s = new Stop();
+            var lat = d._latlng.lat,lon = d._latlng.lng;
+            s.setLat(d._latlng.lat);
+            s.setLon(d._latlng.lng);
+            return s;
+          })
+          cb(newstops);
+          Lext.toggleStopsEvents();
+          count = 0;
+          map.off('click',onClick);
+        }
+          console.log('It kinda worked')
+      }
+      map.on('click',onClick);
     }
     plotmod.setSaver = function(saver){
       Lext.setSaver(saver);

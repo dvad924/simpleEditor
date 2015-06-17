@@ -24,6 +24,51 @@ path:hover{
 .innerMarker{
  
 }
+#datawarehouse{
+	position:absolute;
+	height:100%;
+	width:100;
+	top:0;
+	padding:0;
+	margin:0;
+	text-align:center;
+	background-color:#ddd;
+	overflow:hidden;
+}
+#stopbox{
+	position:absolute;
+	right:0px;
+	height:50%;
+	width:200px;
+	overflow-y:scroll;
+	overflow-x:hidden;
+	top:50%;
+	padding:0;
+	margin:0;
+	background-color:#ddd;
+}
+#filtertext{
+	padding-left:5px;
+	padding-top:5px;
+	border-radius:10px;	
+}
+.stop{
+	background-color:white;
+	text-align:center;
+}
+.tripinfo{
+	position:relative;
+	border-style':solid;
+	background-color:green;
+	overflow:hidden;
+}
+#tripinfo{
+	position:relative;
+	overflow:hidden;
+	height:90%;
+	border-style:solid;
+}
+
 </style>
 <link rel="stylesheet" href="scripts/bower_components/leaflet/dist/leaflet.css">
 <!--
@@ -34,6 +79,19 @@ path:hover{
 <script src="scripts/leafletExt.js"></script>
 
 -->
+<script>
+var interact = function(pmsg,emsg,check){
+		var string = '';
+		do{
+			if(string !== '')
+				alert(emsg);
+			string = prompt(pmsg);
+			if(string === null)
+				return
+		}while(check(string));
+		return string;
+	}
+</script>
 <script src="scripts/bower_components/d3/d3.min.js"></script>
 <script src="scripts/bower_components/d3-topojson/topojson.js"></script>
 <script src="scripts/gtfsapi/fuzzyfixer.js"></script>
@@ -43,27 +101,17 @@ path:hover{
 <body>
 <div id="map">
 	</div>
+
+<div id='datawarehouse'></div>
+<div id='stopbox'>
+	<div id='filter'> 
+		<input type='text' id='filtertext'> 
+	</div>
+</div>
+<div id='bottom'> </div>
 <script>
-	var Wheight = window.outerHeight;
-	var Wwidth = window.outerWidth;
 	var startApp = require('editor');
     
-  	var box = d3.select('body').append('div').attr('id','infobox');
-		  	box.style(function(){
-			  		var width = 400 
-				  	var height = 200
-				  	var pos = Wheight - height - 50;
-			  		return{
-			  		position:'absolute',
-			  		height: height,
-			  		width: width,
-			  		top: pos,
-			  		padding: 0,
-			  		margin:0,
-			  		'text-align':'center',
-			  		'background-color': '#ccc',
-			  	}
-			}());
 	startApp();
 
 </script>

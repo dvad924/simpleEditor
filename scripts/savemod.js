@@ -35,7 +35,7 @@ Collection.prototype.intersect = function(list){
 		return coll.contains(d);
 	})
 }
-var SaveObj = function(graph,stopIds,stops,trip_ids,path_id,saveList,deltas){
+var SaveObj = function(graph,stopIds,stops,trip_ids,path_id,saveList,deltas,trip){
 	this.graph = graph;
 	this.stops = stopIds;
 	this.sDict = stops;
@@ -44,6 +44,7 @@ var SaveObj = function(graph,stopIds,stops,trip_ids,path_id,saveList,deltas){
 	this.saveList = saveList;
 	this.deltas = deltas;
 	this.stopC = new Collection();
+	this.trip= trip;
 };
 
 SaveObj.prototype.setAddDels = function(){
@@ -74,6 +75,7 @@ SaveObj.prototype.getReqObj = function(){
 		data:this.stopC.coll,
 		trip_ids:this.trip_ids,
 		deltas:this.deltas,
+		trip:this.trip;
 	}	
 }
 SaveObj.prototype.markSaved = function(){
