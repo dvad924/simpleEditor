@@ -134,18 +134,17 @@ var databox = (function(){
 							savebutton.attr('disabled','true'); //disable button, prevent accidents
 							var saveobj = update.save(), reqobj = saveobj.getReqObj();
 							reqobj.id=agency;
+							var trip = saveobj.trip;
+							var route_id = trip.getRouteId();
 							console.log(reqobj);
 							upload.editStops(reqobj,function(err,data){
 								update.notify(!err);
 								if(err){
+									savebutton.attr('disabled',null); //disable button, prevent accidents
 									alert(err);
-									savebutton.attr('disabled','false');
 								}else{
-									var trip = saveobj.trip;
-									var route_id = trip.getRouteId();
-									if(trip.isNew())
+									if(trip.isNewTrip())
 										routes.getRoute(route_id).addTrip(trip);
-									
 									saveobj.getAdded().forEach(function(d){stops.addStop(d)});
 									saveobj.markSaved();
 									setTrip(saveobj.path_id,saveobj.stops,routes.getRoute(route_id).trips);

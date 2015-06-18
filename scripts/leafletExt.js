@@ -110,10 +110,12 @@ var Lext = (function(L){
                   saver.attr('disabled',null);
                })
                obj.on('dblclick',function(){
-                   map.removeLayer(layers.paths);
-                   update.deletePoint(obj.feature);
-                   update.update();
-                   saver.attr('disabled',null);
+                   if(layers.stops.getLayers().length > 2){
+                      map.removeLayer(layers.paths);
+                      update.deletePoint(obj.feature);
+                      update.update();
+                      saver.attr('disabled',null);
+                   } 
                })
                return obj;
 			    },

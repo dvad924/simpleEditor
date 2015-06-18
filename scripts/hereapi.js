@@ -4,7 +4,7 @@ var swap = function(point){
 var hereApi = function(){
 		var here = {};
 		here.points=[];
-		here.app_id = '&app_id=', here.app_code = '&app_code='
+		here.app_id = '&app_id=Bz4ZlbpcifSacIK9v2mq', here.app_code = '&app_code=laXkT6pG_eHHQckETu5AEg'
 		here.baseUrl = 'http://route.cit.api.here.com/routing/7.2/calculateroute.json?'
 		here.mode = '&mode=fastest;car'
 		here.routeAtts= '&routeAttributes=sh'

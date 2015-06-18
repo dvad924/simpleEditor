@@ -3,6 +3,7 @@ var Graph = require('./miniGraph');
 var SaveTracker = require('./savetracker');
 var SaveObj = require('./savemod');
 var Stop 	= require('./gtfsapi/models/stop');
+var StopCls = require('./gtfsapi/models/stops');
 var range = function(min,max){
 	min = Math.max(min,0);
 	var list = [];
@@ -15,11 +16,13 @@ var updateObj = (function(){
 	var graph = new Graph(); //graph to maintain the relationships of the current tripRoute with its stops
 	var plotmod;
 	var Stops;
+	var buffStops;
 	var saveTracker;
 	var deltas;
 	var Trip;
 	var reset = function(){
 		graph = new Graph();
+		buffStops = new StopCls();
 	}
 	var processResponse = function(Stops, data){
 		var routeGeo = data;
@@ -46,10 +49,19 @@ var updateObj = (function(){
 		});	
 	}
 
+	var getStop = function(id){
+		var stop = Stops.getStop(id);
+		if(!stop){
+			stop = buffStops.getStop(id);
+		}
+		return stop;
+	}
+
 	var displayStops = function(Stops,Trip){
 		var FeatColl = {type:'FeatureCollection', features:[]};
 		Trip.getStops().forEach(function(sid){
-			FeatColl.features.push(Stops.getStop(sid).getFeature());
+			var stop = getStop(sid);
+			FeatColl.features.push(stop.getFeature());
 		})
 		plotmod.clearStops();
 		plotmod.plotStops(FeatColl);
@@ -60,7 +72,8 @@ var updateObj = (function(){
 	var getWaypoints = function(Stops,Trip){	//get simple psuedo matrix of trip traversals
 		var coorVector = [];			
 		Trip.getStops().forEach(function(id){		//for each stop that it visits
-			coorVector.push(Stops.getStop(id).getPoint());	//push that stop's coordinates into the vector
+			var stop = getStop(id);
+			coorVector.push(stop.getPoint());	//push that stop's coordinates into the vector
 		});
 		return coorVector;
 	}
@@ -80,30 +93,38 @@ var updateObj = (function(){
 	var create = function(Dict,trip,plotter,route_id){
 		saveTracker = new SaveTracker();
 		Stops = Dict;
+		buffStops = new StopCls();
 		plotmod = plotter;
 		Trip = trip;
 		plotmod.initializeTrip(function(stopList){
-			var stopids = [];
+			var stopids = [],service_id;
 			stopList.forEach(function(d,i){
-				id = interact('Please Enter Stop ' + i+1 +'Id',
+				var id = interact('Please Enter Stop ' + i+1 +'Id',
 								'Error Stop exists',
-								function(id){return Stops.hasStop(id)});
+								function(id){return Stops.hasStop(id)
+												||  buffStops.hasStop(id)});
 				d.setId(id);
 				d.addRoute(route_id);
-				Stops.addStop(d);
+				buffStops.addStop(d);
 				saveTracker.addEvent('i',{id:id,position:i+1,data:d});
 			});
+			service_id = interact('Please Enter Service Id','invalid service id',function(d){return false});
 			stopids = stopList.map(function(d){return d.getId();})
 			trip.setStops(stopids);
 			trip.setRouteId(route_id);
+			trip.setNew();
+			trip.setServiceId(service_id);
 			stopList.forEach(function(d){
 				d.addTrip(trip.getId());
-			})
+			});
+			if(trip.isNewTrip()){
+				id = interact('Please Enter new trip_id','trip already exists',function(d){return d !== 'NewTripTest';})
+				trip.setIds([id])
+			}
 			var waypoints = getWaypoints(Stops,trip);
 			displayStops(Stops,trip);
 			requestPath(Stops,waypoints);
 		});
-
 	}
 
 	var updateMap = function(stopObj){
@@ -113,9 +134,9 @@ var updateObj = (function(){
 			s.setEdited();
 			// Stops[stopid].properties.edited = true;
 			debugger;
-			var stop = Stops.getStop(s.getId())	//try to get the stop
+			var stop = getStop(s.getId())	//try to get the stop
 			if( !stop )	//if it isn't there
-				Stops.addStop(s);	//add it
+				buffStops.addStop(s);	//add it
 			else{ //otherwise update the coordinates
 				stop.setPoint(s.getPoint());
 				stop.setEdited();
@@ -124,7 +145,8 @@ var updateObj = (function(){
 		}
 		var reqobj = [];
 		Trip.getStops().forEach(function(sid){
-			reqobj.push(Stops.getStop(sid).getPoint());
+			var stop = getStop(sid);
+			reqobj.push(stop.getPoint());
 		})
 		requestPath(Stops,reqobj);
 	}
@@ -145,6 +167,7 @@ var updateObj = (function(){
 	var notify = function(success){
 		if(success){
 			saveTracker = new SaveTracker(); //if a save was successful reset the tracker to the new state.
+			Stops.addStops(buffStops.getStops());
 		}
 	}
 
@@ -172,7 +195,7 @@ var updateObj = (function(){
 		i = Math.max(i1,i2); //The assumption is that since they are associated they are right next to eachother in the list;
 		stops.splice(i,0,id);
 	
-		Stops.addStop(nStop); 
+		buffStops.addStop(nStop); 
 		saveTracker.addEvent('i',{id:id,position:i+1,data:nStop});
 		return id;
 	}
@@ -192,7 +215,7 @@ var updateObj = (function(){
 			stopList.push(stops[inx+1])
 		}
 		victimid = stops.splice(inx,1); //remove the element from the stopList
-		victim = Stops.getStop(victimid[0]);
+		victim = getStop(victimid[0]);
 		victim.setDeleted(true);
 		victim.setEdited();
 		saveTracker.addEvent('d',{id:id,position:inx+1,data:victim});

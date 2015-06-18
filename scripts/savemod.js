@@ -71,11 +71,17 @@ SaveObj.prototype.buildReqObj = function(){
 
 SaveObj.prototype.getReqObj = function(){
 	this.buildReqObj();	
+	var shape = this.graph.toFeatureCollection().features[0].geometry;
+	shape.type = 'LineString';
+	shape.coordinates = shape.coordinates.reduce(function(p,c,i,a){
+		return p.concat(c);
+	})
 	return {
+		shape:shape,
 		data:this.stopC.coll,
 		trip_ids:this.trip_ids,
 		deltas:this.deltas,
-		trip:this.trip;
+		trip:this.trip
 	}	
 }
 SaveObj.prototype.markSaved = function(){
